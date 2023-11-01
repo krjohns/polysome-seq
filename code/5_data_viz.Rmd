@@ -1,0 +1,322 @@
+### Title: 2023_10_23_LSG_polyseq Analysis
+### Author: Kate Johnson
+### Date: 11/01/23
+### Add'tl Notes:
+
+# setup
+libraries
+```{r}
+# all-purpose data analysis tools
+library(tidyverse)
+# ggplot extension
+library(cowplot)
+#correlation plots
+library(corrplot)
+# easier string formatting
+library(glue)
+# filepath manipulation
+library(fs)
+
+# edgeR and limma for DE analysis
+library(edgeR)
+library(limma)
+
+# for reading/writing .gct files
+#library(cmapR)
+
+# for working with matrices (especially sparse ones)
+library(Matrix)
+```
+directories
+```{r}
+wd = getwd()
+# For accessing shared data on server
+shared_dir = "/Volumes/nchevrier/katej/projects/polysome-seq/2023_10_23_LSG_polyseq/bcbio"
+# For reading in counts/metadata
+input_dir = path(wd, "../input/data/2_formatted_data")
+# For saving plots  
+output_dir = path(wd, "../output/2023_10_30-LSG")
+```
+
+sources
+```{r}
+
+```
+
+# Read in Data
+```{r, warnings =F}
+
+#counts
+counts = read_csv(path(input_dir, "20231101_LSG_polysome_counts.csv")) 
+#rename gene column
+colnames(counts)[1] = "gene"
+# format matrix to be ready for de analysis
+genes <- counts$gene
+counts$gene <- NULL
+rownames(counts) <- genes
+
+#meta        
+metadata = read_csv(path(input_dir, "20231101_LSG_polysome_metadata.csv")) %>%
+           #drop unused first col
+           select(-1)
+```
+# QC
+
+complexity
+- ratio of unique molecules to the number of reads
+- unique molecular identifiers (UMIs) allow us to collapse molecules that we read multiple times
+    - A higher complexity means more information for the amount of reads we have
+- calculate complexity by comparing the UMI counts (`counts`) to the uncollapsed read counts 
+- should be ~0.6, so a large deviation below that might be cause for concern
+- raw read counts are called "tagcounts-dupes" by bcbio
+
+```{r}
+## make a table of total counts per sample
+counts_summary = enframe(colSums(counts), name='Name', value='counts') %>%
+    left_join(metadata)
+
+# read in raw read counts
+counts_dir = path(shared_dir, "final/2023-10-31_bcbio")
+
+# read matrix
+reads = readMM(path(counts_dir, 'tagcounts-dupes.mtx'))
+
+# add rownames and colnames
+rownames(reads) = read_lines(path(counts_dir, 'tagcounts-dupes.mtx.rownames'))
+colnames(reads) = read_lines(path(counts_dir, 'tagcounts-dupes.mtx.colnames'))
+
+## calculate counts for reads and add to summary table
+# get read counts
+reads = enframe(colSums(reads), name = 'sample', value = 'read_counts') %>%
+        rename_all(~str_to_title(.))
+
+# join to counts
+counts_summary = left_join(counts_summary, reads)
+
+#plot
+p<-counts_summary %>%
+    mutate(complexity = counts / Read_counts) %>%
+    ggplot(aes(str_c(pool, "_", replicate),
+               complexity, fill=pool)) + 
+        geom_col() + 
+        facet_grid(. ~ treatment) + 
+        labs(x = "Polysome Fraction", title = "Sample Complexity (UMIs / Uncollapsed Read Counts)") +
+        #guides(fill = 'none') + 
+        theme(axis.text.x = element_text(angle = 45, hjust = .5, vjust = .5, size = rel(0.5)),
+              plot.title = element_text(hjust = 0.5))
+
+#save_plot
+save_plot(path(output_dir, "QC_plots/sample_complexity_replicate_barplot.pdf"),p)
+
+```
+
+counts per sample
+```{r}
+ggplot(counts_summary, aes(str_c(pool, '_', replicate), 
+                   counts, fill=pool)) + 
+    geom_col() + 
+    facet_grid(treatment ~ .) + 
+    #scale_y_log10() +
+    #guides(fill = 'none') + 
+    xlab('Polysome Fraction') +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+save_plot(path(output_dir, "QC_plots/counts_per_sample.pdf"), p, dpi = 90)
+```
+
+replicate correlation
+```{r}
+
+#pairwise correlations between samples for each treatment
+for(treatment in unique(metadata$treatment)){
+    suppressWarnings(
+        gplots::heatmap.2(cor(counts[, metadata$treatment == treatment]),
+                          trace = 'none', Rowv=F, Colv=F, 
+                          col=viridis::viridis(75),
+                          margins = c(10, 10))
+    )
+}
+
+# table of all pairwise correlations < 0.9
+# get all pairwise correlations
+cormelt = as_tibble(reshape2::melt(cor(counts)))
+colnames(cormelt) = c('s1', 's2', 'cor')
+
+filt_cormelt = cormelt %>%
+    # extract pieces of name for sample 1
+    extract(s1, c('treatment', 'replicate1', 'pool'), '(.*)_(.*)_(.*)') %>%
+    # extract pieces of name for sample 2
+    extract(s2, c('treatment2', 'replicate2', 'pool2'), '(.*)_(.*)_(.*)') %>%
+    # only keep samples where treatment and pool match
+    # replicate1 < replicate2 removes duplicate comparisons
+    filter(treatment == treatment2, pool == pool2, replicate1 < replicate2) %>%
+    # comparison column makes for easier reading
+    mutate(comparison = str_c(replicate1, '-', replicate2)) %>%
+    # remove extraneous columns
+    select(-treatment2, -pool2, -replicate1, -replicate2) #%>%
+    # we're only interested in correlations less than .9
+    filter(cor < .9)
+
+
+p<-ggplot(filt_cormelt,
+       aes(x = treatment, y = pool, fill = cor)) +
+       geom_tile() +
+       geom_text(aes(label = round(cor,3)), 
+                  hjust = 0.5, vjust = 0.5) +
+       facet_wrap(~comparison)
+  
+#save plot 
+save_plot(path(output_dir, "QC_plots/replicate_correlation.pdf"),p, dpi = 90)
+```
+
+
+# Data Normalization
+```{r}
+
+#set cpm thresholds (keep low to start)
+cpm_threshold = 10
+cpm_needed = 2
+
+groups <- factor(str_c(metadata$treatment, '_', metadata$pool))
+dge = DGEList(counts = counts, group = groups)
+dge_norm = calcNormFactors(dge)
+isexpr = rowSums(cpm(dge_norm) > cpm_threshold) >= cpm_needed
+
+dge_norm_fltd = dge_norm[isexpr, ]
+
+cpm = cpm(dge_norm_fltd) #dropped to ~8,000 genes
+cpm_all = cpm(dge_norm)
+
+#save cpm heatmaps for plotting in morpheus
+write.csv(as.matrix(cpm), path(output_dir, "cpm_tables/20231101_LSG_cpmTable_filt.csv"))
+write.csv(as.matrix(cpm_all), path(output_dir, "cpm_tables/20231101_LSG_cpmTable_all.csv"))
+
+```
+
+PCA
+```{r}
+# run pca
+pca = prcomp(t(cpm), center=T, scale=T)
+# combine pca results with metadata for easy plotting
+pca_res = bind_cols(metadata, as_tibble(pca$x))
+
+# plot
+
+# color by treatment
+p1<-ggplot(pca_res, aes(PC1, PC2, color=treatment)) + 
+    geom_point(size=2) +
+    scale_color_manual(values = c("grey", "peachpuff1","#F68064"))
+
+# color by pool
+p2<-ggplot(pca_res, aes(PC1, PC2, color=pool)) + 
+    geom_point(size=2) +
+    scale_color_manual(values = c("#68C3A5", "#B9CEE6", "#8C9FCA","#707FA1"))
+
+# color by replicate
+p3<-ggplot(pca_res, aes(PC1, PC2, color=replicate)) + 
+    geom_point(size=2)
+
+# save plots
+save_plot(path(output_dir, "QC_plots/PCA/PCA_by_treatment.pdf"),p1,dpi=90)
+save_plot(path(output_dir, "QC_plots/PCA/PCA_by_pool.pdf"),p2,dpi=90)
+save_plot(path(output_dir, "QC_plots/PCA/PCA_by_replicate.pdf"),p3,dpi=90)
+```
+
+
+# DE analysis
+
+The general steps for modeling are: 
+1. Filter cpm and metadata based on the tissue at hand
+2. Make a design matrix specifying the experimental condition of each sample 
+3. Run `voom()` to transform and prepare data
+4. Run initial `lmFit()` to fit data
+5. Setup contrasts between groups for tests you want to run
+    1. List contrasts
+    2. Make contrast matrix
+6. Run `contrast.fit()` to fit contrasts
+7. Run `eBayes` to estimate statistic results
+8. Gather results into useful tables
+
+```{r}
+# DESIGN MATRIX
+  # create factor with all conditions in experiment
+  f <- factor(groups, levels=unique(groups))
+  
+  # build a design matrix for modeling with limma voom and indicating condition for each sample
+  design <- model.matrix(~0 + f)
+  
+  # renames column names in the design (remove extra "f" at beginning of each group name)
+  colnames(design) <- sub("f", "", colnames(design))
+  rownames(design) <- colnames(counts)
+  
+  ##LIMMA VOOM 
+  
+  # limma voom transforms count data to log2-counts per million (log2-cpm) with associated weights
+  # estimate the mean-variance relationship and use this to compute appropriate observational-level weights.
+  # The data are then ready for linear modeling.
+  y <- voom(dge_norm_fltd, design, plot=T)
+  
+  # fit linear model for each gene given a series of arrays
+  fit <- lmFit(y, design)
+  
+  ##CONTRAST MATRIX
+  #make more generalized later
+  contrasts_list = c("LSG2h_Input - Control_Input",
+                     "LSG2h_Pool1 - Control_Pool1",
+                     "LSG2h_Pool2 - Control_Pool2",
+                     "LSG2h_Pool3 - Control_Pool3",
+                     "LSG6h_Input - Control_Input",
+                     "LSG6h_Pool1 - Control_Pool1",
+                     "LSG6h_Pool2 - Control_Pool2",
+                     "LSG6h_Pool3 - Control_Pool3")
+
+ contrast.matrix <- makeContrasts(contrasts = contrasts_list, levels = design)
+
+ #do some renaming of scores to facilitate pivoting later on and make our lives easier...
+ contrast.matrix = contrast.matrix %>%
+  as.data.frame %>% #convert to df for now for manipulation
+  rename_with(., ~gsub(" - Control.*", "", .)) %>%
+  as.matrix()
+
+fit.cont <- contrasts.fit(fit, contrast.matrix)
+
+e.fit <- eBayes(fit.cont)
+  
+#first bind together all LFC lists for all genes from ea. contrast
+log2FC.all = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                                   function(coef) topTable(e.fit, coef=coef, number=Inf,
+                                                           sort.by='none')$logFC)) %>%
+            data.frame()
+
+adj_p = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                                          function(coef) topTable(e.fit, coef=coef, number=Inf,
+                                                                  sort.by='none')$adj.P.Val))
+
+rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), sep = ".")
+colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
+
+#turn log2FC.all.binary into matrix of -1,0,1
+FDR_thresh = 0.1
+log2FC.all.binary = adj_p %>%
+                    mutate_all(~ifelse(. < FDR_thresh, 1, 0))
+
+#filter LFC matrix accordingly
+log2FC.all.binary[(log2FC.all < 0) == T] = -1 * log2FC.all.binary[(log2FC.all < 0) == T]
+names = rownames(log2FC.all.binary)
+log2FC.all.binary = log2FC.all.binary %>%
+                     data.frame()
+
+DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary != 0) > 0,] %>%
+                data.frame()
+rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary != 0) > 0]
+
+#filter DE matrix based on LFC thresh
+LFC_thresh = 1
+DE_LFC_thresh = DE_log2FC.all %>%
+                filter_all(any_vars(abs(.) > LFC_thresh))
+
+#write csvs of DEGs and all log2FC
+write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/20231101_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
+
+```
+
