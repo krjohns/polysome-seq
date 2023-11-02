@@ -172,7 +172,6 @@ save_plot(path(output_dir, "QC_plots/replicate_correlation.pdf"),p, dpi = 90)
 
 # Data Normalization
 ```{r}
-
 #set cpm thresholds (keep low to start)
 cpm_threshold = 10
 cpm_needed = 2
@@ -186,6 +185,12 @@ dge_norm_fltd = dge_norm[isexpr, ]
 
 cpm = cpm(dge_norm_fltd) #dropped to ~8,000 genes
 cpm_all = cpm(dge_norm)
+
+# reorder cols so its easier to open in morpheus
+# use metadata to help establish order
+metadata = metadata %>%
+           arrange(treatment, pool, replicate)
+cpm = cpm[,metadata$Name]
 
 #save cpm heatmaps for plotting in morpheus
 write.csv(as.matrix(cpm), path(output_dir, "cpm_tables/20231101_LSG_cpmTable_filt.csv"))
