@@ -253,6 +253,7 @@ cpm_needed = 2
 counts_filt = counts %>%
               select(-LSG6h_Rep1_Input)
 meta_filt = metadata %>% filter(Name %in% colnames(counts_filt))
+rownames(counts_filt) = rownames(counts)
 
 # check that col order of counts_filt and row order of meta_filt match
 sum(colnames(counts_filt) == meta_filt$Name) #sum is 35 (same as so looks like all match)
@@ -341,7 +342,7 @@ DE_LFC_thresh = DE_log2FC.all %>%
           filter_all(any_vars(abs(.) > LFC_thresh))
 
 #write csvs of DEGs and all log2FC
-write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
+write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
 
 ```
 
