@@ -322,7 +322,7 @@ rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), se
 colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
 
 #turn log2FC.all.binary into matrix of -1,0,1
-FDR_thresh = 0.1
+FDR_thresh = 0.01
 log2FC.all.binary = adj_p %>%
               mutate_all(~ifelse(. < FDR_thresh, 1, 0))
 
@@ -343,6 +343,53 @@ DE_LFC_thresh = DE_log2FC.all %>%
 
 #write csvs of DEGs and all log2FC
 write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
+
+```
+
+# Translation Efficiency ----
+First plot % of total transcripts in each pool (take cpm in each pool and divide by input cpm)
+Use only DE genes 
+We will use this to help assess different methods of calculating TE
+- First use FDR < 0.01 |LFC| > 0 (~7304 genes)
+```{r}
+
+#bind rownames as its own column ('gene') to make sure gene names dont get lost during manipulation
+percent_transcript = cbind(gene = rownames(DE_log2FC.all), cpm[rownames(DE_log2FC.all),]) %>%
+                     #make df for easier manipulation
+                     data.frame() %>%
+                     #pivot longer so we can average over replicates
+                     pivot_longer(cols = -gene, names_to ="Name", values_to = "cpm") %>%
+                     #split "Name" column into relevant info
+                     separate(Name, into = c("Treatment", "Rep", "Pool"), sep="_") %>%
+                     #pivot wider to get reps in separate cols
+                     pivot_wider(names_from = "Rep", values_from = "cpm") %>%
+                     #make cpm numeric (preserving NA values)
+                     mutate_at(.vars = vars(Rep1:Rep3), ~ifelse(!(is.na(.)), as.numeric(.), .)) %>%
+                     #calculate average
+                        #struggling to get rowwise operations working correctly
+                        #so sticking to a more manual calc for now
+                     mutate(Avg_cpm = (Rep1 + Rep2 + Rep3) / 3) %>%
+                     #drop raw info after spot checking averages
+                     select(-contains("Rep"))
+                    
+#store inputs separately
+inputs = percent_transcript %>%
+         filter(Pool == "Input") %>%
+         #drop Treatment column to avoid duplicates during merge
+         select(-Pool) %>%
+         rename("Avg_input_cpm" = Avg_cpm)
+
+#bind inputs back to other pools and divide by inputs to get %
+percent_total = percent_transcript %>%
+                     #filter out inputs
+                     filter(Pool != "Input") %>%
+                     # bind inputs
+                     merge(inputs, by = c("gene", "Treatment")) %>%
+                     #calculate % of input 
+                     # because we have normalized some ratios will be > 100%
+                     mutate(percent_of_total = Avg_cpm/Avg_input_cpm * 100)
+
+#format df for complex heatmap
 
 ```
 
