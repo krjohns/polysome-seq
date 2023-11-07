@@ -259,7 +259,6 @@ The general steps for modeling are:
 ```{r}
 # FILTER COUNTS & METADATA TO DROP BAD REPLICATE----
 # LSGh6 input rep1 has low counts and clusters poorly -- so we will drop it
-
 #set cpm thresholds (keep low to start)
 cpm_threshold = 10
 cpm_needed = 2
@@ -453,5 +452,260 @@ write.csv(as.matrix(H), path(output_dir, "TE_analysis/Percent-mRNA-in-pool/FDR0.
 
 
 #same plot but only 3,000 highly regulated transcripts
+
+H_filt = H[rownames(DE_LFC_thresh),]
+H_filt_scale = H_filt %>%
+               t() %>%
+               scale() %>%
+               t()
+
+p<-Heatmap(H_filt_scale,
+        column_title = "% of Total mRNA in Pool",
+        name = "Avg_pool_cpm / Avg_input_cpm",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = top_annot,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   Pool = c("Pool1" = "#68C3A5", 
+                                            "Pool2" ="#539C84",
+                                            "Pool3" ="#3E7563")),
+                          border = T,
+                          show_legend = F,
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = top_annot$Pool,
+        column_gap = unit(2, "mm"),
+        row_km = 30,
+        row_gap = unit(0, "mm"),
+        col = colorRamp2(c(min(H_filt_scale),-1, 0, max(H_filt_scale)), 
+                         c("white", "white","#8C9FCA","darkblue"))
+        )
+
+#save plot
+do_plot( "TE_analysis/Percent-mRNA-in-pool/FDR0.01/Pool-cpm_div_input-cpm_LFC_1-relative.pdf", 8, 6, p)
+
+#write csv
+write.csv(as.matrix(H_filt), path(output_dir, "TE_analysis/Percent-mRNA-in-pool/FDR0.01/Pool_cpm-div-Input_cpm_LFC_1.csv"))
+
+
+####---- percent usage side by side with LFC
+H2 = DE_LFC_thresh  
+top_annot2 <- data.frame(Name = colnames(H2)) %>%
+              separate(Name, into = c("Treatment", "Pool"), sep = "_")
+rownames(top_annot2) = colnames(H2)
+
+
+H2_scale = H2 %>%
+           t() %>%
+           scale() %>%
+           t()
+
+p2 <-Heatmap(H2_scale,
+        column_title = "LFC",
+        name = "Log2(Treated/Control)",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = top_annot2,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   Pool = c("Input" = "white",
+                                            "Pool1" = "#68C3A5", 
+                                            "Pool2" ="#539C84",
+                                            "Pool3" ="#3E7563")),
+                          border = T,
+                          show_legend = T,
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = top_annot2$Treatment,
+        column_gap = unit(2, "mm"),
+        row_km = 30,
+        row_gap = unit(0, "mm"),
+        col = colorRamp2(c(-3,0,3), 
+                         c("blue", "white","red"))
+        )
+
+p3 <- p+p2
+
+#save plot for now (re-order clusters later)
+do_plot( "TE_analysis/Percent-mRNA-in-pool/FDR0.01/LFC_1/PErcent-in-pool_PLUS_logfoldchange.pdf", 
+         8, 6, p3)
+```
+
+#Re-design contrasts matrix
+First approach: only perform comparisons in contrasts matrix
+```{r}
+##CONTRAST MATRIX----
+# each contrast for DE will be one pool in treated - control (ie. LSG2h_input - Control_input)
+# 1. get all treatments that arent control
+# 2. make an equivalent list with the same pools in control
+# 3. subtract 1 - 2
+all_cond = levels(groups)[!grepl("Control", (levels(groups)))]
+conts = gsub(".*_", "Control_", all_cond)
+contrasts_list = str_c(all_cond, " - ", conts)
+
+#DEFINE ADDT'L CONTRASTS FOR TE
+# think about ways to streamline this
+# set up df of contrasts to help with easy addition/subtraction
+TE_contrasts = data.frame(contrasts = str_c("(", contrasts_list, ")")) %>%
+               mutate(Treatment = gsub("\\(", "", gsub("_.*", "",contrasts)),
+                      Pool = gsub(".*_", "", gsub(" - .*", "", contrasts))) %>%
+               pivot_wider(names_from = "Treatment", values_from = "contrasts") %>%
+               t() %>% #creates matrix
+               data.frame() %>%
+               #hack for combining strings from different columns
+               mutate(pseudo_free = str_c("(", select(., X1) %>%
+                                            reduce(str_c, sep =""),
+                                             ") - (",
+                                             select(., X2:X4) %>% 
+                                            reduce(str_c, sep=" + "), 
+                                             ")")) %>%
+               #update naming for delta_Input column (change in mRNA = delta_mRNA)
+               rename("delta.mRNA" = X1,
+                      "L" = X2,
+                      "M" = X3,
+                      "H" = X4) %>%
+               #create TE columns
+               mutate(TE = str_c("(", 
+                                 select(., M:H) %>% 
+                                 reduce(str_c, sep=" + "), 
+                                 ") - (", 
+                                 select(., L) %>%
+                                 reduce(paste0),
+                                 ")"),
+                      delta.M = str_c("(", 
+                                 select(., M) %>% 
+                                 reduce(paste0), 
+                                 ") - (", 
+                                 select(., L) %>%
+                                 reduce(paste0),
+                                 ")"),
+                      delta.H = str_c("(", 
+                                 select(., H) %>% 
+                                 reduce(paste0), 
+                                 ") - (", 
+                                 select(., L) %>%
+                                 reduce(paste0),
+                                 ")"))
+
+#write csv of contrasts scheme for future reference
+write.csv(as.matrix(TE_contrasts), path(output_dir, "TE_analysis/TE_contrasts_matrix.csv"))
+
+#pivot contrasts table to get ready for named vector to feed into makeContrasts
+TE_contrasts_pivot = TE_contrasts %>%
+                     #drop descriptor row
+                     filter(L != "Pool1") %>%
+                     #add treatment names to prepare for pivot
+                     mutate(Treatment = rownames(.), .before = 1) %>%
+                     pivot_longer(-Treatment,
+                                  names_to = "contrast_name", values_to = "contrast_value") %>%
+                     #concatenate contrast_name and treatment
+                     mutate(contrast_name = str_c(contrast_name, "_", Treatment))
+                     
+
+contrast.matrix <- makeContrasts(contrasts = TE_contrasts_pivot$contrast_value, 
+                      levels = design)
+
+#rename matrix according to naming scheme above
+contrast.matrix = contrast.matrix %>%
+                  as.data.frame() %>% #convert to df for now for manipulation 
+                                      #(use as.data.frame to preserve names)
+                  rename_all(~plyr::mapvalues(., 
+                                              from = TE_contrasts_pivot$contrast_value,
+                                              to = TE_contrasts_pivot$contrast_name)) %>%
+                  as.matrix()
+
+fit.cont <- contrasts.fit(fit, contrast.matrix)
+
+e.fit <- eBayes(fit.cont)
+
+#first bind together all LFC lists for all genes from ea. contrast
+log2FC.all = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                             function(coef) topTable(e.fit, coef=coef, number=Inf, adjust = "BH",
+                                                     sort.by='none')$logFC)) %>%
+      data.frame()
+
+adj_p = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                                    function(coef) topTable(e.fit, coef=coef, adjust = "BH",
+                                                            number=Inf,
+                                                            sort.by='none')$adj.P.Val))
+
+rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), sep = ".")
+colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
+
+#turn log2FC.all.binary into matrix of -1,0,1
+FDR_thresh = 0.01
+log2FC.all.binary = adj_p %>%
+              mutate_all(~ifelse(. < FDR_thresh, 1, 0))
+
+#filter LFC matrix accordingly
+log2FC.all.binary[(log2FC.all < 0) == T] = -1 * log2FC.all.binary[(log2FC.all < 0) == T]
+names = rownames(log2FC.all.binary)
+log2FC.all.binary = log2FC.all.binary %>%
+                    data.frame()
+
+#only use adj p vals from TE contrasts
+DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary %>% select(contains("TE")) != 0) > 0,] %>%
+                     data.frame()
+rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary %>% 
+                                                         select(contains("TE")) != 0) > 0]
+
+#filter DE matrix based on LFC thresh
+LFC_thresh = 1
+DE_LFC_thresh = DE_log2FC.all %>%
+                     filter(if_any(contains("TE"), ~ abs(.) > LFC_thresh))
+
+#write csvs of DEGs and all log2FC
+write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231107_filtered_FDR0.01_LFC1_TE-calcs_TE-DEGs-ONLY-lfcTable.csv"))
+
+```
+
+Second Approach: follows more closely approach found here: https://github.com/barnalab/regeneration/blob/main/10302022code.R
+- Sum relevent pools (Light + medium or Medium + heavy) in raw data
+- Normalize sums (cpm)
+- Then compute contrasts
+```{r}
+
+#First add LM, MH and sudo-free cols to raw data 
+
+```
+
+Make pretty heatmaps!
+```{r}
+#remake LFC heatmap
+#use LFC data we have now from TE analysis
+LFC_H = DE_LFC_thresh %>%
+        select(starts_with("L"), starts_with("M"), starts_with("H"))
+top_annotLFC = data.frame(Name = colnames(LFC_H)) %>%
+             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
+             mutate(`Polysome Fraction` = gsub("L", "Light",
+                                               gsub("M", "Medium", 
+                                                    gsub("H", "Heavy", `Polysome Fraction`))))
+  
+
+
+
+#make TE heatmap
+TE_H = 
+TE_p 
+
+#filter percent of transcript data by our 2883 sig. TE genes
+#and remake heatmap
+
+#put it all together
+
+#get clusters
+
+#re-make heatmap with clusters
+
+#save cluster
+
+#save plot
+
 ```
 
