@@ -677,27 +677,141 @@ Second Approach: follows more closely approach found here: https://github.com/ba
 
 Make pretty heatmaps!
 ```{r}
+#filter percent of transcript data by our 2883 sig. TE genes
+#and remake heatmap
+#4 genes were not DE but were TE
+#"Trpm7"      "Spata6"     "Rpl36a.ps3" "Gm8355"  
+#for the time being ill just remove since i dont think we care
+
+H_per = H[rownames(H) %in% rownames(DE_LFC_thresh),]
+H_per_scale = H_per %>%
+               t() %>%
+               scale() %>%
+               t()
+topAnnot_per = top_annot %>%
+               mutate(Pool = gsub("Pool1", "Light",
+                      gsub("Pool2", "Medium",
+                      gsub("Pool3", "Heavy", Pool))),
+                      Pool = factor(Pool, 
+                                    levels = c("Light", "Medium", "Heavy"))) %>%
+               rename("Polysome Fraction" = Pool)
+
+p_per <-Heatmap(H_per_scale,
+        column_title = "% of Total mRNA in Pool",
+        name = "Avg_pool_cpm / Avg_input_cpm",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_per,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
+                                                          "Medium" ="#539C84",
+                                                           "Heavy" ="#3E7563")),
+                          border = T,
+                          show_legend = F,
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = top_annot$Pool,
+        column_gap = unit(2, "mm"),
+        row_km = 30,
+        row_gap = unit(0, "mm"),
+        col = colorRamp2(c(min(H_per_scale),-1, 0, max(H_per_scale)), 
+                         c("white", "white","#8C9FCA","darkblue"))
+        )
+
+
 #remake LFC heatmap
 #use LFC data we have now from TE analysis
-LFC_H = DE_LFC_thresh %>%
-        select(starts_with("L"), starts_with("M"), starts_with("H"))
-top_annotLFC = data.frame(Name = colnames(LFC_H)) %>%
+H_LFC = DE_LFC_thresh %>%
+        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
+        as.matrix()
+#reorder data to match
+H_LFC = H_LFC[rownames(H_per),]
+H_LFC_scale = H_LFC %>%
+              t() %>%
+              scale() %>%
+              t()
+
+topAnnot_LFC = data.frame(Name = colnames(H_LFC)) %>%
              separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
              mutate(`Polysome Fraction` = gsub("L", "Light",
                                                gsub("M", "Medium", 
-                                                    gsub("H", "Heavy", `Polysome Fraction`))))
+                                                    gsub("H", "Heavy", `Polysome Fraction`))),
+                    `Polysome Fraction` = factor(`Polysome Fraction`, 
+                                                 levels = c("Light", "Medium", "Heavy"))) %>%
+             select(2,1) #reorder to match first heatmap
   
 
+p_LFC <-Heatmap(H_LFC,
+        column_title = "LFC",
+        name = "log2(treated/control)",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
+                                                          "Medium" ="#539C84",
+                                                          "Heavy" ="#3E7563")),
+                          border = T,
+                          show_legend = F,
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = topAnnot_LFC$`Polysome Fraction`,
+        column_gap = unit(2, "mm"),
+        row_km = 20,
+        row_gap = unit(0, "mm"),
+        #col = colorRamp2(c(-3, 0, 3), c("white", "#8C9FCA", "darkblue"))
+        )
+intermed_p <- p_per + p_LFC
 
+#save intermediate heatmap
+do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/complexHeatmap/percent-transcript_PLUS_LFC_2883genes.pdf",
+        8,6,intermed_p)
 
 #make TE heatmap
-TE_H = 
-TE_p 
+H_TE = DE_LFC_thresh %>%
+        select(contains("TE"), contains("mRNA")) %>%
+        as.matrix()
+#reorder data to match
+H_TE = H_TE[rownames(H_per),]
 
-#filter percent of transcript data by our 2883 sig. TE genes
-#and remake heatmap
+topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
+             separate(Name, into = c("Metric", "Treatment"), sep = "_") 
+
+p_TE <- Heatmap(H_TE,
+        column_title = "TE",
+        name = "log2((heavy+medium)-light)",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_TE,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   Metric = c("TE" = "pink", 
+                                              "delta.mRNA" ="lightyellow")),
+                          border = T,
+                          show_legend = F,
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = topAnnot_TE$Metric,
+        column_gap = unit(2, "mm"),
+        row_km = 20,
+        row_gap = unit(0, "mm"),
+        col = colorRamp2(c(-3, 0, 3), c("green", "white", "pink"))
+        )
 
 #put it all together
+first_try <-p_per + p_LFC +p_TE
+
+#first iteration plot save
+do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/compiled_heatmap_test.pdf", 8,6,first_try)
 
 #get clusters
 
