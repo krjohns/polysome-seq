@@ -26,6 +26,10 @@ library(limma)
 
 # for working with matrices (especially sparse ones)
 library(Matrix)
+
+#complex heatmap
+library(ComplexHeatmap)
+library(circlize) #for colorRamp2 color scaling
 ```
 directories
 ```{r}
@@ -41,6 +45,16 @@ output_dir = path(wd, "../output/2023_10_30-LSG")
 sources
 ```{r}
 
+```
+
+#complex heatmap plot fxn
+move to plotting functions!
+```{r}
+do_plot = function(file_name, w, h, p) {
+  pdf(file=path(output_dir, file_name), width = w, height = h)
+      draw(p)
+      dev.off()
+}
 ```
 
 # Read in Data
@@ -390,6 +404,53 @@ percent_total = percent_transcript %>%
                      mutate(percent_of_total = Avg_cpm/Avg_input_cpm * 100)
 
 #format df for complex heatmap
+df = percent_total %>%
+     select(-contains("Avg")) %>%
+     pivot_wider(names_from = c("Treatment", "Pool"),
+                 values_from = "percent_of_total")
 
+#prepare annotations
+top_annot = data.frame(Name = colnames(df)[-1]) %>%
+            separate(Name, into = c("Treatment", "Pool"), sep ="_")
+rownames(top_annot) = colnames(df)[-1]
+
+rwnmes = df$gene
+H = df %>%
+    select(-gene) %>%
+    as.matrix()
+rownames(H) = rwnmes
+  
+p<-Heatmap(H,
+        column_title = "% of Total mRNA in Pool",
+        name = "Avg_pool_cpm / Avg_input_cpm",
+        show_row_names = F,
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = top_annot,
+                         col = list(Treatment = c(Control = "grey",
+                                                   LSG2h = "#F89F7C",
+                                                  LSG6h = "#F68064"),
+                                   Pool = c("Pool1" = "#68C3A5", 
+                                            "Pool2" ="#539C84",
+                                            "Pool3" ="#3E7563")),
+                          border = T,
+                          show_legend = F,
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = top_annot$Treatment,
+        column_gap = unit(2, "mm"),
+        row_km = 20,
+        row_gap = unit(0, "mm"),
+        col = colorRamp2(c(0, 100, 200), c("white", "#8C9FCA", "darkblue"))
+        )
+
+#save plot
+do_plot( "TE_analysis/Percent-mRNA-in-pool/FDR0.01/Pool-cpm_div_input-cpm.pdf", 8, 6, p)
+
+#write csv
+write.csv(as.matrix(H), path(output_dir, "TE_analysis/Percent-mRNA-in-pool/FDR0.01/Pool_cpm-div-Input_cpm.csv"))
+
+
+#same plot but only 3,000 highly regulated transcripts
 ```
 
