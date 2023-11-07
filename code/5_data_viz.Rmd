@@ -324,12 +324,13 @@ e.fit <- eBayes(fit.cont)
 
 #first bind together all LFC lists for all genes from ea. contrast
 log2FC.all = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
-                             function(coef) topTable(e.fit, coef=coef, number=Inf,
+                             function(coef) topTable(e.fit, coef=coef, number=Inf, adjust = "BH",
                                                      sort.by='none')$logFC)) %>%
       data.frame()
 
 adj_p = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
-                                    function(coef) topTable(e.fit, coef=coef, number=Inf,
+                                    function(coef) topTable(e.fit, coef=coef, adjust = "BH",
+                                                            number=Inf,
                                                             sort.by='none')$adj.P.Val))
 
 rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), sep = ".")
