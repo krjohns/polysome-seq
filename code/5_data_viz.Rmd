@@ -663,6 +663,8 @@ DE_LFC_thresh = DE_log2FC.all %>%
 #write csvs of DEGs and all log2FC
 write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231107_filtered_FDR0.01_LFC1_TE-calcs_TE-DEGs-ONLY-lfcTable.csv"))
 
+#save binary matrix
+write.csv(as.matrix(log2FC.all.binary), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231108_filtered_FDR0.01_LFC1_TE-calcs_TE-binary-sig-matrix.csv"))
 ```
 
 Second Approach: follows more closely approach found here: https://github.com/barnalab/regeneration/blob/main/10302022code.R
@@ -992,5 +994,27 @@ all3_ordered = p_per + p_LFC + p_TE
 #save plot
 #she's beautiful i love her lets save it!
 do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/20231108_2h_compiledHeatmap.pdf",8,6, all3_ordered)
+```
+Repeat but for 6h timepoint
+
+#mRNA v TE correlation plot
+```{r}
+comparison_df = log2FC.all %>%
+                select(contains("mRNA"), contains("TE")) %>%
+                rownames_to_column("gene") %>%
+                pivot_longer(-gene, names_to = "metric", values_to = "LFC") %>%
+                separate(metric, into = c("metric", "Treatment"), sep = "_") %>%
+                mutate(metric = gsub("delta.mRNA", "LFC mRNA",
+                                     gsub("TE", "LFC TE", metric))) %>%
+                pivot_wider(names_from = "metric", values_from = "LFC")
+
+quick_plot <-ggplot(comparison_df, aes(x = `LFC mRNA`, y = `LFC TE`)) +
+  geom_point() +
+  geom_point(data = subset(comparison_df, abs(`LFC mRNA`) < 1 & abs(`LFC TE`) > 1), aes(x = `LFC mRNA`, y = `LFC TE`),
+             color = "#AED29E")+
+  facet_wrap(~Treatment, scales = "free")
+
+
+save_plot(path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA-v-TE-correlation_test_plot_all_genes.pdf"), quick_plot)
 ```
 
