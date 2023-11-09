@@ -1016,5 +1016,19 @@ quick_plot <-ggplot(comparison_df, aes(x = `LFC mRNA`, y = `LFC TE`)) +
 
 
 save_plot(path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA-v-TE-correlation_test_plot_all_genes.pdf"), quick_plot)
+
+#get group of genes that are interesting for follow-up
+int_genes <- subset(comparison_df, abs(`LFC mRNA`) < 1 & abs(`LFC TE`) > 1)
+int_genes_up <- subset(comparison_df, abs(`LFC mRNA`) < 1 & `LFC TE` > 1)
+
+mini_binary <- cbind(gene = rownames(log2FC.all.binary), log2FC.all.binary %>% select(contains("TE")))
+int_genes_sig <- int_genes_up %>%
+                 left_join(mini_binary, by = "gene") %>%
+                 filter(!(TE_LSG2h == 0 & TE_LSG6h == 0)) %>%
+                 rename_at(c(5:6), ~str_c(., "_sig")) %>%
+                 mutate_at(c(5:6), ~as.logical(.)) %>%
+                 arrange(gene)
+
+write.csv(as.matrix(int_genes_sig), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01.csv"))
 ```
 
