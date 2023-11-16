@@ -27,10 +27,37 @@ library(limma)
 # for working with matrices (especially sparse ones)
 library(Matrix)
 
-#complex heatmap
+#complex heatmap /plotting
 library(ComplexHeatmap)
 library(circlize) #for colorRamp2 color scaling
+library(monochromeR) # for generating palettes
+library(ggpubr) #arranging plots, stat_cor()
+library(emojifont) #for help rendering unicode text
 ```
+theme
+```{r}
+# Plot settings ----
+#compress PDFs
+tools::compactPDF('mypdfs/',  gs_quality='screen')
+###PLOTTING THEME ###
+theme_update(text = element_text(size = rel(3)),
+             legend.title = element_text(size = rel(2.5)),
+             legend.key.size = unit(.5, 'inches'),
+             legend.text = element_text(size = rel(2)),
+             panel.background = element_rect(fill = "white", colour = "black"),
+             axis.line = element_blank(),
+             axis.text.x = element_text(size=rel(3)),
+             axis.text.y = element_text(size=rel(3)),
+             axis.title.y = element_text(margin=margin(t = 0, r = 0.3, b = 0, l = 0.5), size=rel(3)),
+             axis.title.x = element_text(size=rel(3)),
+             plot.title = element_text(size = rel(3), face= "bold", hjust=0.5),
+             plot.margin = unit(c(0.2, 0.2, 0.2, 0.2), "inches"),
+             strip.text.x = element_text(size = rel(4), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.text.y = element_text(size = rel(4), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.background = element_rect(linewidth=0.35, color="black")) #trbl
+```
+
+
 directories
 ```{r}
 wd = getwd()
@@ -1011,9 +1038,9 @@ Repeat but for 6h timepoint
 H_per6 = H[rownames(H) %in% rownames(H_per), !(grepl("2h", colnames(H)))]
 
 H_per_scale6 = H_per6 %>%
-              t() %>%
-              scale() %>%
-              t()
+               t() %>%
+               scale() %>%
+               t()
 
 topAnnot_per6 = top_annot %>%
                filter(Treatment != "LSG2h") %>%
@@ -1180,7 +1207,7 @@ rd <- row_order(p_LFC_drawn6) #get row order & save
 cluster_list6 = list() #initialize empty list
 for(i in 1:20){
   cluster_list6[[i]] = data.frame(Cluster = i, 
-                                 gene = c(rownames(H_LFC6)[ rd[[i]]]))
+                                 gene = c(rownames(H_LFC6)[ d[[i]]]))
 }
 cluster_df_6h = do.call(bind_rows, cluster_list6)
 
@@ -1311,21 +1338,100 @@ p_TE6 <- Heatmap(H_TE_reorder6,
                                                            "orangered","firebrick")))
 
 all3_ordered_6h = p_per6 + p_LFC6 + p_TE6
+#plotting LFC and TE only ---- (need to have same # rows and be ordered the same)
+temp2 <- p_LFC + p_TE + p_LFC6 + p_TE6
 #save plot
 #she's beautiful i love her lets save it!
 #do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/6h/20231109_6h_compiledHeatmap_12Clusters.pdf",8,6, #all3_ordered_6h)
 ```
 
 ```{r}
-#plotting LFC and TE only ---- (need to have same # rows and be ordered the same)
-temp2 <- p_LFC + p_TE + p_LFC6 + p_TE6
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/LFC_TE_2-6hours_clustered-by-2h.pdf", 8, 6, temp2)
+set.seed(123)
+
+#2h----
+H_per = H[rownames(H) %in% rownames(DE_LFC_thresh), !(grepl("6h", colnames(H)))]
+
+#LFC heatmap
+#use LFC data we have now from TE analysis
+H_LFC = DE_LFC_thresh %>%
+        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
+        select(contains("2h")) %>%
+        as.matrix()
+
+#reorder data to match
+H_LFC = H_LFC[rownames(H_per),]
+topAnnot_LFC = data.frame(Name = colnames(H_LFC)) %>%
+             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
+             mutate(`Polysome Fraction` = gsub("L", "Light",
+                                               gsub("M", "Medium", 
+                                                    gsub("H", "Heavy", `Polysome Fraction`))),
+                    `Polysome Fraction` = factor(`Polysome Fraction`, 
+                                                 levels = c("Light", "Medium", "Heavy"))) %>%
+             select(2,1) #reorder to match first heatmap
+
+#make TE heatmap
+H_TE = DE_LFC_thresh %>%
+        select(contains("mRNA"), contains("TE")) %>%
+        as.matrix()
+#reorder data to match
+H_TE = H_TE[rownames(H_per), !grepl("6h", colnames(H_TE))]
+topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
+              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
+              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
+                                   gsub("TE", "\U0394TE",
+                                        Metric)),
+                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))) %>%
+              select(2,1) # reoder so color blocks appear correctly
+
+#6h----
+H_per6 = H[rownames(H) %in% rownames(H_per), !(grepl("2h", colnames(H)))]
+
+
+topAnnot_per6 = top_annot %>%
+               filter(Treatment != "LSG2h") %>%
+               mutate(Pool = gsub("Pool1", "Light",
+                      gsub("Pool2", "Medium",
+                      gsub("Pool3", "Heavy", Pool))),
+                      Pool = factor(Pool, 
+                                    levels = c("Light", "Medium", "Heavy"))) %>%
+               rename("Polysome Fraction" = Pool)
+
+
+#remake LFC heatmap
+#use LFC data we have now from TE analysis
+H_LFC6 = DE_LFC_thresh %>%
+        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
+        select(contains("6h")) %>%
+        as.matrix()
+
+#reorder data to match
+H_LFC6 = H_LFC6[rownames(H_per),]
+topAnnot_LFC6 = data.frame(Name = colnames(H_LFC6)) %>%
+             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
+             mutate(`Polysome Fraction` = gsub("L", "Light",
+                                               gsub("M", "Medium", 
+                                                    gsub("H", "Heavy", `Polysome Fraction`))),
+                    `Polysome Fraction` = factor(`Polysome Fraction`, 
+                                                 levels = c("Light", "Medium", "Heavy"))) %>%
+             select(2,1) #reorder to match first heatmap
+
+
+#make TE heatmap
+H_TE6 = DE_LFC_thresh %>%
+        select(contains("mRNA"), contains("TE")) %>%
+        as.matrix()
+#reorder data to match
+H_TE6 = H_TE6[rownames(H_per), !grepl("2h", colnames(H_TE6))]
+
+
+
+#pool----
 
 #pool LFC and TE heatmaps then replot (assume order is constant)
-sum(rownames(H_LFC_reorder) == rownames(H_LFC6)) #check -- all good
-sum(rownames(H_TE_reorder) == rownames(H_TE6)) # also good
-H_LFC_pooled <- cbind(H_LFC_reorder, H_LFC6)
-H_TE_pooled <- cbind(H_TE_reorder, H_TE6)
+sum(rownames(H_LFC) == rownames(H_LFC6)) #check -- all good
+sum(rownames(H_TE) == rownames(H_TE6)) # also good
+H_LFC_pooled <- cbind(H_LFC, H_LFC6)
+H_TE_pooled <- cbind(H_TE, H_TE6)
 
 #annotations
 LFC_pooled_annot <- rbind(topAnnot_LFC, topAnnot_LFC6)
@@ -1397,35 +1503,35 @@ p_TE_pooled <- Heatmap(H_TE_pooled,
 LFC_pooled_drawn <- draw(p_TE_pooled + p_LFC_pooled)
 
 #get cluster info and reorder
-rd <- row_order(LFC_pooled_drawn) #get row order & save
 LFC_pooled_drawn
+rd <- row_order(LFC_pooled_drawn) #get row order & save
 
 #save plot for now
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/LFC_TE_2-6h_20Clusters.pdf",8,6,LFC_pooled_drawn)
+do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/20231113_LFC_TE_2-6h_20Clusters.pdf",8,6,LFC_pooled_drawn)
 
 #get cluster gene lists
 cluster_list_pooled = list() #initialize empty list
 for(i in 1:20){
   cluster_list_pooled[[i]] = data.frame(Cluster = i, 
-                             gene = c(rownames(H_TE_pooled)[rd[[i]]]))
+                             gene = c(rownames(H_TE_pooled)[ rd[[i]]]))
 }
 cluster_df_pooled = do.call(bind_rows, cluster_list_pooled)
 
 #edit/condense clusters by eye
 cluster_df_edit_pooled = cluster_df_pooled %>%
-                  mutate(old_cluster = Cluster, 
-                         Cluster = ifelse(old_cluster %in% c(18:20), 1,
-                                    ifelse(old_cluster %in% c(17,15), 2,
-                                    ifelse(old_cluster %in% c(14,16), 3,
-                                    ifelse(old_cluster %in% c(13), 4,
-                                    ifelse(old_cluster %in% c(12), 5, 
-                                    ifelse(old_cluster %in% c(11,4,8,10), 6, 
-                                    ifelse(old_cluster %in% c(9,7,3), 7, 8)))))))) %>%
-                  arrange(Cluster)
+                         mutate(old_cluster = Cluster, 
+                         Cluster = ifelse(old_cluster %in% c(15:20), 1,
+                                    ifelse(old_cluster %in% c(13,14), 2,
+                                    ifelse(old_cluster %in% c(6:9), 3,
+                                    ifelse(old_cluster %in% c(10:12), 4,
+                                    ifelse(old_cluster %in% c(5), 5, 
+                                    ifelse(old_cluster %in% c(2,3), 6, 
+                                    ifelse(old_cluster %in% c(1,4), 7, 7)))))))) %>%
+                         arrange(Cluster)
 
 rownames(cluster_df_edit_pooled) = cluster_df_edit_pooled$gene
 
-write.csv(as.matrix(cluster_df_edit_pooled), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/20231109_pooledLFC_TE_compiledHeatmap_8Clusters_cluster-info.csv"))
+write.csv(as.matrix(cluster_df_edit_pooled), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/20231113_pooledLFC_TE_compiledHeatmap_7-Clusters_cluster-info.csv"))
 
 #make final plots
 gene_order_pool <- cluster_df_edit_pooled$gene
@@ -1434,7 +1540,7 @@ H_TE_pooled_reorder <- H_TE_pooled[gene_order_pool,]
 
 leftAnnot_pool <- cluster_df_edit_pooled
 
-p_LFC_pooled <- Heatmap(H_LFC_pooled_reorder,
+p_LFC_pooled2 <- Heatmap(H_LFC_pooled_reorder,
         column_title = "LFC",
         column_title_gp = gpar(fontsize=12),
         row_title_gp = gpar(fontsize=7),
@@ -1442,7 +1548,7 @@ p_LFC_pooled <- Heatmap(H_LFC_pooled_reorder,
         show_row_names = F,
         show_column_names=F,
         cluster_rows = F,
-        cluster_row_slices = T,
+        cluster_row_slices = F,
         #row_order = gene_order,
         cluster_columns = F,
         top_annotation = HeatmapAnnotation(df = LFC_pooled_annot,
@@ -1466,7 +1572,7 @@ p_LFC_pooled <- Heatmap(H_LFC_pooled_reorder,
         col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
         )
 
-p_TE_pooled <- Heatmap(H_TE_pooled_reorder,
+p_TE_pooled2 <- Heatmap(H_TE_pooled_reorder,
         column_title = "TE",
         column_title_gp = gpar(fontsize=12),
         name = "log2(((heavy)(medium))/light)",
@@ -1496,7 +1602,7 @@ p_TE_pooled <- Heatmap(H_TE_pooled_reorder,
                                                             "white", "white", "white",
                                                            "orangered","firebrick")))
 #save even though clusters are wrong
-temp <- p_LFC_pooled + p_TE_pooled
+p_LFC_pooled2 + p_TE_pooled2
 do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/LFC_TE_2-6h_Compiled_8_Clusters.pdf", 8, 6, temp)
 
 ```
@@ -1504,29 +1610,117 @@ do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/LFC_TE_2-6h_Compiled_8_
 
 #mRNA v TE correlation plot
 ```{r}
+
+mini_binary <- cbind(gene = rownames(log2FC.all.binary), 
+                       log2FC.all.binary %>% 
+                             select(contains("TE"), 
+                             contains("mRNA"))) %>%
+                rename_at(-1,~str_c(., "_sig"))
+
+#consider adding additional columns for different FDRs
 comparison_df = log2FC.all %>%
                 select(contains("mRNA"), contains("TE")) %>%
                 rownames_to_column("gene") %>%
-                pivot_longer(-gene, names_to = "metric", values_to = "LFC") %>%
+                merge(mini_binary, by = "gene") %>%
+                pivot_longer(-c(gene, contains("sig")), names_to = "metric", values_to = "LFC") %>%
                 separate(metric, into = c("metric", "Treatment"), sep = "_") %>%
                 mutate(metric = gsub("delta.mRNA", "LFC mRNA",
                                      gsub("TE", "LFC TE", metric))) %>%
-                pivot_wider(names_from = "metric", values_from = "LFC")
+                pivot_longer(contains("_sig"), names_to = "metric2", values_to = "sig") %>%
+                separate(metric2, into= c("metric2", "Treatment2", "junk"), sep = "_") %>%
+                filter(Treatment == Treatment2 & grepl("TE", metric) == grepl("TE", metric2)) %>%
+                select(-c(Treatment2, metric2, junk)) %>%
+                mutate(metric = gsub("LFC ", "", metric)) %>%
+                pivot_wider(names_from = "metric", values_from = c("LFC", "sig")) %>%
+                #categorize according to zhulyn et al definitions
+                mutate(category = ifelse(LFC_TE > 1 & LFC_mRNA < 1 & LFC_mRNA > -1,
+                                         "TE UP (no \U0394 mRNA)",
+                                         ifelse(LFC_TE < -1 & LFC_mRNA > -1,
+                                         "TE DOWN (no \U0394 mRNA)",
+                                         ifelse(LFC_TE > 1 & LFC_mRNA > 1,
+                                         "mRNA UP and TE UP",
+                                         ifelse(LFC_TE < -1 & LFC_mRNA < -1,
+                                         "mRNA DOWN and TE DOWN",
+                                         ifelse(LFC_TE < -1  & LFC_mRNA > 1,
+                                         "mRNA UP and TE DOWN",
+                                         ifelse(LFC_TE > 1  & LFC_mRNA < -1,
+                                         "mRNA DOWN and TE UP",
+                                         ifelse(LFC_TE < 1 & LFC_mRNA > 1,
+                                         "mRNA UP (no \U0394 TE)",
+                                         ifelse(LFC_TE > -1 & LFC_mRNA < -1,
+                                         "mRNA DOWN (no \U0394 TE)", "no change")))))))),
+                       category = factor(category, levels = c("TE UP (no \U0394 mRNA)", "TE DOWN (no \U0394 mRNA)",
+                                                              "mRNA UP and TE UP", "mRNA DOWN and TE DOWN",
+                                                              "mRNA UP (no \U0394 TE)", "mRNA DOWN (no \U0394 TE)",
+                                                              "mRNA UP and TE DOWN", "mRNA DOWN and TE UP",
+                                                              "no change")))
 
-quick_plot <-ggplot(comparison_df, aes(x = `LFC mRNA`, y = `LFC TE`)) +
-  geom_point() +
-  geom_point(data = subset(comparison_df, abs(`LFC mRNA`) < 1 & abs(`LFC TE`) > 1), aes(x = `LFC mRNA`, y = `LFC TE`),
-             color = "#AED29E")+
-  facet_wrap(~Treatment, scales = "free")
+
+MT_colors = c("#9E7FB8","#C0ACD0", "#ED6868", "#DA9B90","#F4908E", "#AE9492","#AED29E", "#5BABA4",
+              "#D278AE", "#A6DFF7", "#A5C7DE","#F29D65", "#EED290")
+zhulyn_colors = c("#6FBE44","#176533", "#C277B1", "#FAA41A", "#6D91CB", "#BFBEBE")
+   
+    #"#F6E4EE"
+
+mRNA_TE_plot <- ggplot(comparison_df, aes(x = `LFC_mRNA`, y = `LFC_TE`, color = category)) +
+  geom_point(data = subset(comparison_df, category == "no change"), size =0.75) +
+  geom_point(data = subset(comparison_df, category != "no change" & !(sig_mRNA != 0 | sig_TE != 0)),
+             size =0.75, color = "black") +
+  geom_point(data = subset(comparison_df, category != "no change" & (sig_mRNA != 0 | sig_TE != 0)), 
+             size =0.75)  +
+  scale_color_manual(values = c("#AED29E","#176533", "#D278AE","#EDC9DE", 
+                                "#FAA41A","#A6DFF7","#C0ACD0", "#9E7FB8","#BFBEBE"), drop = F) +
+  #add dashed lines for cut-offs
+  geom_hline(yintercept = 1, color = "grey", linetype =2) +
+  geom_hline(yintercept = -1, color = "grey", linetype =2) +
+  geom_vline(xintercept = 1, color = "grey", linetype =2) +
+  geom_vline(xintercept = -1, color = "grey", linetype =2) +
+  geom_smooth(method = 'lm',formula= y~x, se=F, col='black', size =0) +
+  stat_cor(aes(label = ..rr.label..),
+           label.y = 7, 
+           size=4, color = 'black') +
+  facet_wrap(~Treatment, scales = "fixed") +
+  xlim(-7.5,7.5) +
+  labs(y = expression("log"["2"] ~ "FC  TE"),
+       x = expression("log"["2"] ~ "FC  mRNA")) +
+  theme_classic() +
+  theme(strip.background = element_rect(color = "white"),
+        strip.text = element_text(face = "bold", size = 14),
+        legend.position = "bottom",
+        legend.text = element_text(size = 5),
+        legend.title = element_text(size=8),
+        legend.key.size = unit(0.1,'inches'),
+        panel.background = element_rect(color = "black"))
 
 
-save_plot(path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA-v-TE-correlation_test_plot_all_genes.pdf"), quick_plot)
+save_plot(path(output_dir, 
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/20231115_mRNA-v-TE-correlation_zhulyn_all_genes.pdf"), 
+          mRNA_TE_plot)
+
+
+
+LSG2h <- comparison_df %>% 
+         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG2h")
+
+LSG6h <- comparison_df %>% 
+         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG6h")
+
+overlap<-LSG2h %>%
+         filter(gene %in% LSG6h$gene)
+
+write.csv(as.matrix(LSG2h),
+          path(output_dir,
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG2h.csv"))
+write.csv(as.matrix(LSG6h),
+          path(output_dir, 
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG6h.csv"))
+write.csv(as.matrix(overlap),
+          path(output_dir, 
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_overlap.csv"))
 
 #get group of genes that are interesting for follow-up
 int_genes <- subset(comparison_df, abs(`LFC mRNA`) < 1 & abs(`LFC TE`) > 1)
 int_genes_up <- subset(comparison_df, abs(`LFC mRNA`) < 1 & `LFC TE` > 1)
-
-mini_binary <- cbind(gene = rownames(log2FC.all.binary), log2FC.all.binary %>% select(contains("TE")))
 int_genes_sig <- int_genes_up %>%
                  left_join(mini_binary, by = "gene") %>%
                  filter(!(TE_LSG2h == 0 & TE_LSG6h == 0)) %>%
