@@ -67,6 +67,8 @@ shared_dir = "/Volumes/nchevrier/katej/projects/polysome-seq/2023_10_23_LSG_poly
 input_dir = path(wd, "../input/data/2_formatted_data")
 # For saving plots  
 output_dir = path(wd, "../output/2023_10_30-LSG")
+# For reading in protein data from interaction scoring project folder
+prot_input_dir = path(wd, "../../Interaction_scoring")
 ```
 
 sources
@@ -1708,9 +1710,12 @@ LSG6h <- comparison_df %>%
 overlap<-LSG2h %>%
          filter(gene %in% LSG6h$gene)
 
-write.csv(as.matrix(LSG2h),
+LSG6h_only<-LSG6h %>%
+            filter(!(gene %in% LSG2h$gene))
+
+write.csv(as.matrix(LSG6h_only),
           path(output_dir,
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG2h.csv"))
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG6h_UNIQUE.csv"))
 write.csv(as.matrix(LSG6h),
           path(output_dir, 
                "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG6h.csv"))
@@ -1729,5 +1734,66 @@ int_genes_sig <- int_genes_up %>%
                  arrange(gene)
 
 write.csv(as.matrix(int_genes_sig), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01.csv"))
+```
+
+#single gene cpm plots
+```{r}
+int_genes <- list(h2 = c("Bcl2l1", "Ccl5", "Eif1", "Eif3e", "Eif3f", "H2.M3",
+                      "H2.Q7", "Jun", "Polr2g", "Rack1", "S100a4", "Saa3"),
+                  h6 = c("Cd47", "Cdkn1a","Eef1g","Eif1a","Irak2", "Irf9", "Nfat5",
+                      "Notch2", "Polr1c", "Runx3", "Traf6"),
+                  shared = c("Btf3","Eef1a1", "Eef2", "Fau", "Gdf15", "Serpinb6b", "Traf5"))
+
+
+#prep cpm data for plotting
+cpm_df_int_test = cpm_all %>%
+              data.frame() %>%
+              rownames_to_column(var = "gene") %>%
+              filter(gene %in% int_genes[[1]] |
+                       gene %in% int_genes[[2]] |
+                       gene %in% int_genes[[3]]) %>%
+              #select(c("gene", contains("Pool"))) %>%
+              pivot_longer(cols = -gene, 
+                           names_to = "Treatment_Rep_Pool",
+                           values_to = "cpm") %>%
+              separate(Treatment_Rep_Pool, 
+                       into = c("Treatment", "Rep", "Pool"), 
+                       sep = "_") %>%
+              pivot_wider(names_from = "Rep", values_from = "cpm") %>%
+              #calculate average and se
+              mutate(Pool = ifelse(Pool == "Input", 0, as.numeric(gsub("Pool", "", Pool))),
+                     Avg_cpm = (Rep1 + Rep2 + Rep3)/3,
+                     se = sqrt(((Rep1-Avg_cpm)^2 + (Rep2-Avg_cpm)^2 +
+                                  (Rep3-Avg_cpm)^2)/3)/sqrt(3))
+#plot
+p<-ggplot(cpm_df_int_test %>% filter(gene %in% int_genes[[1]]),
+       aes(x = Pool, y = Avg_cpm, color = Treatment)) +
+       geom_line(size=1) +
+       geom_point() +
+       geom_errorbar(aes(ymin=Avg_cpm - se, ymax= Avg_cpm + se), width=0.25, size=1) +
+       scale_color_manual(values = c(Control = "grey",
+                                     LSG2h = "#FAC5B0",
+                                     LSG6h = "#F68064")) +
+       facet_wrap(~gene, scales="free_y") #+
+       scale_x_discrete(name = "Polysome Pool", limits=factor(c(0,1,2,3)))
+
+save_plot(path(output_dir,
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA_TE_correlation/TE_up_gene-lists/single_gene_plots/LSG2h_genes_int_withINPUT.pdf"),
+          p)
+
+#save df
+write.csv(as.matrix(cpm_df_int_test), path(output_dir,
+               "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA_TE_correlation/TE_up_gene-lists/single_gene_plots/cpm_df_int_genes.csv"))
+```
+
+
+#TE v protein correlation
+```{r}
+#read in protein data
+
+lfc_table_all = read.csv(fs::path(prot_input_dir, "Compiled_lfcTable_AllDatasets_092222.csv")) %>%
+            data.frame() %>%
+            mutate(X = NULL) 
+
 ```
 
