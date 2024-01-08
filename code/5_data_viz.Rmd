@@ -628,7 +628,7 @@ First approach: only perform comparisons in contrasts matrix
 # 1. get all treatments that arent control
 # 2. make an equivalent list with the same pools in control
 # 3. subtract 1 - 2
-all_cond = levels(groups)[!grepl("Control", (levels(groups)))]
+all_cond = levels(f)[!grepl("Control", (levels(f)))]
 conts = gsub(".*_", "Control_", all_cond)
 contrasts_list = str_c(all_cond, " - ", conts)
 
@@ -640,47 +640,68 @@ TE_contrasts = data.frame(contrasts = str_c("(", contrasts_list, ")")) %>%
                       Pool = gsub(".*_", "", gsub(" - .*", "", contrasts))) %>%
                pivot_wider(names_from = "Treatment", values_from = "contrasts") %>%
                t() %>% #creates matrix
-               data.frame() #%>%
-               #hack for combining strings from different columns
-               mutate(pseudo_free = str_c("(", select(., X1) %>%
-                                            reduce(str_c, sep =""),
-                                             ") - (",
-                                             select(., X2:X4) %>% 
-                                            reduce(str_c, sep=" + "), 
-                                             ")")) %>%
+               data.frame() %>%
                #update naming for delta_Input column (change in mRNA = delta_mRNA)
-               rename("delta.mRNA" = X1,
+               rename("Total" = X1,
                       "L" = X2,
                       "M" = X3,
-                      "H" = X4) %>%
+                      "H" = X4,
+                      "Polysome" = X5,
+                      "Weighted.Polysome" = X6) %>%
+               #hack for combining strings from different columns
                #create TE columns
-               mutate(TE = str_c("(", 
+               mutate(
+                      Delta_Pool1 = str_c("(", 
+                                 select(., L) %>% 
+                                 reduce(paste0), 
+                                 ") - (", 
+                                 select(., Total) %>%
+                                 reduce(paste0),
+                                 ")"),
+                      Delta_Pool2 = str_c("(", 
+                                 select(., M) %>% 
+                                 reduce(paste0), 
+                                 ") - (", 
+                                 select(., Total) %>%
+                                 reduce(paste0),
+                                 ")"),
+                      Delta_Pool3 = str_c("(", 
+                                 select(., H) %>% 
+                                 reduce(paste0), 
+                                 ") - (", 
+                                 select(., Total) %>%
+                                 reduce(paste0),
+                                 ")"),
+                      Polysomal_shift = str_c("(", 
                                  select(., M:H) %>% 
                                  reduce(str_c, sep=" + "), 
                                  ") - (", 
                                  select(., L) %>%
                                  reduce(paste0),
                                  ")"),
-                      delta.M = str_c("(", 
-                                 select(., M) %>% 
+                      TE = str_c("(", 
+                                 select(., Polysome) %>% 
                                  reduce(paste0), 
                                  ") - (", 
-                                 select(., L) %>%
+                                 select(., Total) %>%
                                  reduce(paste0),
                                  ")"),
-                      delta.H = str_c("(", 
-                                 select(., H) %>% 
+                      Weighted_TE = str_c("(", 
+                                 select(., Weighted.Polysome) %>% 
                                  reduce(paste0), 
                                  ") - (", 
-                                 select(., L) %>%
+                                 select(., Total) %>%
                                  reduce(paste0),
-                                 ")"))
+                                 ")")
+                      )
 
 #write csv of contrasts scheme for future reference
-write.csv(as.matrix(TE_contrasts), path(output_dir, "TE_analysis/TE_contrasts_matrix.csv"))
+write.csv(as.matrix(TE_contrasts), path(output_dir, "TE_analysis/2024_01_04_TE_contrasts_matrix_updated.csv"))
 
 #pivot contrasts table to get ready for named vector to feed into makeContrasts
 TE_contrasts_pivot = TE_contrasts %>%
+                     #drop un-needed contrasts
+                     select(-c(Polysome, Weighted.Polysome)) %>% 
                      #drop descriptor row
                      filter(L != "Pool1") %>%
                      #add treatment names to prepare for pivot
@@ -739,25 +760,24 @@ rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary %>%
                                                          select(contains("TE")) != 0) > 0]
 
 #filter DE matrix based on LFC thresh
-LFC_thresh = 1
+LFC_thresh = 0.5
 DE_LFC_thresh = DE_log2FC.all %>%
                      filter(if_any(contains("TE"), ~ abs(.) > LFC_thresh))
 
 #write csvs of DEGs and all log2FC
-write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231107_filtered_FDR0.01_LFC1_TE-calcs_TE-DEGs-ONLY-lfcTable.csv"))
+write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_lfc-matrix.csv"))
 
 #save binary matrix
-write.csv(as.matrix(log2FC.all.binary), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231108_filtered_FDR0.01_LFC1_TE-calcs_TE-binary-sig-matrix.csv"))
+write.csv(as.matrix(log2FC.all.binary), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_binary-sig-matrix.csv"))
 ```
+
 
 Second Approach: follows more closely approach found here: https://github.com/barnalab/regeneration/blob/main/10302022code.R
 - Sum relevent pools (Light + medium or Medium + heavy) in raw data
 - Normalize sums (cpm)
 - Then compute contrasts
 ```{r}
-
-#First add LM, MH and sudo-free cols to raw data 
-
+#First add LM, MH and sudo-free cols to raw data -- done in counts matrix above
 ```
 
 Make pretty heatmaps!
