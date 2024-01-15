@@ -743,7 +743,7 @@ rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), se
 colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
 
 #turn log2FC.all.binary into matrix of -1,0,1
-FDR_thresh = 0.01
+FDR_thresh = 0.1
 log2FC.all.binary = adj_p %>%
               mutate_all(~ifelse(. < FDR_thresh, 1, 0))
 
@@ -765,10 +765,10 @@ DE_LFC_thresh = DE_log2FC.all %>%
                      filter(if_any(contains("TE"), ~ abs(.) > LFC_thresh))
 
 #write csvs of DEGs and all log2FC
-write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_lfc-matrix.csv"))
+#write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_lfc-matrix.csv"))
 
 #save binary matrix
-write.csv(as.matrix(log2FC.all.binary), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_binary-sig-matrix.csv"))
+#write.csv(as.matrix(log2FC.all.binary), path(output_dir, "TE_analysis/2024_01_TE/FDR0.01/LFC0.5/2024_01_04_translation_DEGs_fdr0.01_lfc0.5_binary-sig-matrix.csv"))
 ```
 
 
@@ -791,66 +791,111 @@ ht_opt$fast_hclust = TRUE
 ht_opt$message = FALSE
 
 #prep data and make heatmaps----
-#filter percent of transcript data by our 2883 sig. TE genes
-#and remake heatmap
-#4 genes were not DE but were TE
-#"Trpm7"      "Spata6"     "Rpl36a.ps3" "Gm8355"  
-#for the time being ill just remove since i dont think we care
+cpm_all = cpm(dge_norm)
+#write.csv(as.matrix(cpm), path(output_dir, "TE_analysis/2024_01_TE/fltd_cpm_matrix.csv"))
 
-#do one timepoint at at time for easier visualization
-H_per = H[rownames(H) %in% rownames(DE_LFC_thresh), !(grepl("6h", colnames(H)))]
-H_per_scale = H_per %>%
-              t() %>%
-              scale() %>%
-              t()
-topAnnot_per = top_annot %>%
-               filter(Treatment != "LSG6h") %>%
-               mutate(Pool = gsub("Pool1", "Light",
-                      gsub("Pool2", "Medium",
-                      gsub("Pool3", "Heavy", Pool))),
-                      Pool = factor(Pool, 
-                                    levels = c("Light", "Medium", "Heavy"))) %>%
-               rename("Polysome Fraction" = Pool)
+#start with percent of transcript heatmap (using sig TE genes)
+  #bind rownames as its own column ('gene') to make sure gene names dont get lost during manipulation
+percent_transcript = cbind(gene = rownames(DE_LFC_thresh), cpm_all[rownames(DE_LFC_thresh),]) %>%
+                     #make df for easier manipulation
+                     data.frame() %>%
+                     #drop polysome/weighted polysome cols bc we dont care for now
+                     select(-contains("Polysome")) %>%
+                     #pivot longer so we can average over replicates
+                     pivot_longer(cols = -gene, names_to ="Name", values_to = "cpm") %>%
+                     #split "Name" column into relevant info
+                     separate(Name, into = c("Treatment", "Rep", "Pool"), sep="_") %>%
+                     #pivot wider to get reps in separate cols
+                     pivot_wider(names_from = "Rep", values_from = "cpm") %>%
+                     #make cpm numeric (preserving NA values)
+                          #ifelse(!(is.na(.)), as.numeric(.), .)
+                     mutate_at(.vars = vars(Rep1:Rep3), ~as.numeric(.)) %>%
+                     #calculate average
+                        #struggling to get rowwise operations working correctly
+                        #so sticking to a more manual calc for now
+                        #accounts for NA's
+                     mutate(Avg_cpm = ifelse(
+                                        !(is.na(Rep1)),
+                                        (Rep1 + Rep2 + Rep3) / 3,
+                                        (Rep2+Rep3)/2)
+                                       ) %>%
+                     #drop raw info after spot checking averages
+                     select(-contains("Rep"))
+                    
+#store inputs separately
+inputs = percent_transcript %>%
+         filter(Pool == "Input") %>%
+         #drop Treatment column to avoid duplicates during merge
+         select(-Pool) %>%
+         rename("Avg_input_cpm" = Avg_cpm)
 
-p_per <-Heatmap(H_per_scale,
-        column_title = "% of Total mRNA in Pool (cpm)",
-        column_title_gp = gpar(fontsize=12),
-        name = "Avg_pool_cpm / Avg_input_cpm \n(row normalized)",
+#bind inputs back to other pools and divide by inputs to get %
+percent_total = percent_transcript %>%
+                     #filter out inputs
+                     filter(Pool != "Input") %>%
+                     # bind inputs
+                     merge(inputs, by = c("gene", "Treatment")) %>%
+                     #calculate % of input 
+                     # because we have normalized some ratios will be > 100%
+                     mutate(percent_of_total = Avg_cpm/Avg_input_cpm * 100)
+
+#format df for complex heatmap
+df = percent_total %>%
+     select(-contains("Avg")) %>%
+     pivot_wider(names_from = c("Treatment", "Pool"),
+                 values_from = "percent_of_total")
+
+#prepare annotations
+top_annot = data.frame(Name = colnames(df)[-1]) %>%
+            separate(Name, into = c("Treatment", "Pool"), sep ="_")
+rownames(top_annot) = colnames(df)[-1]
+
+rwnmes = df$gene
+H = df %>%
+    select(-gene) %>%
+    as.matrix()
+rownames(H) = rwnmes
+  
+p<-Heatmap(H,
+        column_title = "% of Total mRNA in Pool; FDR < 0.1 | abs(LFC) > 0.5",
+        name = "Avg_pool_cpm / Avg_input_cpm",
         show_row_names = F,
         show_column_names=F,
-        #cluster_rows =T,
+        cluster_rows =T,
         cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_per,
+        top_annotation = HeatmapAnnotation(df = top_annot,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                           "Heavy" ="#3E7563")),
+                                   Pool = c("Pool1" = "#68C3A5", 
+                                            "Pool2" ="#539C84",
+                                            "Pool3" ="#3E7563")),
                           border = T,
                           show_legend = F,
-                          annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_per$Treatment,
-        column_gap = unit(0, "mm"),
-        border = T,
-        row_km = 20,
-        row_title_gp = gpar(fontsize=7, angle = 0),
+        column_split = top_annot$Treatment,
+        column_gap = unit(2, "mm"),
+        #row_km = 20,
         row_gap = unit(0, "mm"),
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(min(H_per_scale),-1, 0, max(H_per_scale)), 
-                         c("white", "white","#B9CEE6","#8C9FCA"))
+        col = colorRamp2(c(0, 100, 200), c("white", "#8C9FCA", "darkblue"))
         )
 
-#"#B9CEE6","#8C9FCA"
-#remake LFC heatmap
-#use LFC data we have now from TE analysis
+#save plot
+do_plot( "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/percent_transcript_cpm_heatmap.pdf", 8, 6, p)
+
+#write csv
+write.csv(as.matrix(H), path(output_dir,
+                             "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/percent_transcript_cpm_heatmap-matrix.csv"))
+```
+
+#LFC + TE heatmaps
+Start with LFC heatmap (2h & 6h together)
+```{r}
 H_LFC = DE_LFC_thresh %>%
-        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
-        select(contains("2h")) %>%
+        select(starts_with("Total"), starts_with("L"), starts_with("M"), starts_with("H")) %>%
         as.matrix()
-#reorder data to match
-H_LFC = H_LFC[rownames(H_per),]
+
+#scale if desired
 H_LFC_scale = H_LFC %>%
               t() %>%
               scale() %>%
@@ -862,15 +907,16 @@ topAnnot_LFC = data.frame(Name = colnames(H_LFC)) %>%
                                                gsub("M", "Medium", 
                                                     gsub("H", "Heavy", `Polysome Fraction`))),
                     `Polysome Fraction` = factor(`Polysome Fraction`, 
-                                                 levels = c("Light", "Medium", "Heavy"))) %>%
-             select(2,1) #reorder to match first heatmap
+                                                 levels = c("Total", "Light", "Medium", "Heavy"))) %>%
+             select(2,1) #reorder cols to match first heatmap
   
-
-p_LFC <-Heatmap(H_LFC,
+p<-Heatmap(H_LFC,
         column_title = "LFC",
         column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=7),
         name = "log2(treated/control)",
-        show_row_names = F,
+        show_row_names = T,
+        row_names_gp = gpar(fontsize = 2),
         show_column_names=F,
         #cluster_rows =T,
         cluster_columns = F,
@@ -878,7 +924,8 @@ p_LFC <-Heatmap(H_LFC,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
+                                   `Polysome Fraction` = c("Total" = "white",
+                                                          "Light" = "#68C3A5", 
                                                           "Medium" ="#539C84",
                                                           "Heavy" ="#3E7563")),
                           border = T,
@@ -886,802 +933,328 @@ p_LFC <-Heatmap(H_LFC,
                           annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
         column_split = topAnnot_LFC$Treatment,
-        column_gap = unit(0, "mm"),
+        column_gap = unit(3, "mm"),
         row_km = 20,
         row_gap = unit(0, "mm"),
         border = T,
         #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
+        col = colorRamp2(c(-4,-0.1, 0, 0.1, 4), c("blue","white","white", "white", "red"))
         )
-intermed_p <- p_per + p_LFC
-p_LFC
-intermed_p
 
-#save intermediate heatmap
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/complexHeatmap/percent-transcript_PLUS_LFC_2883genes_2h.pdf",
-        8,6,intermed_p)
-
-#make TE heatmap
-H_TE = DE_LFC_thresh %>%
-        select(contains("mRNA"), contains("TE")) %>%
-        as.matrix()
-#reorder data to match
-H_TE = H_TE[rownames(H_per), !grepl("6h", colnames(H_TE))]
-
-topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
-              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
-              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
-                                   gsub("TE", "\U0394TE",
-                                        Metric)),
-                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))) %>%
-              select(2,1) # reoder so color blocks appear correctly
-
-p_TE <- Heatmap(H_TE,
-        column_title = "TE",
-        column_title_gp = gpar(fontsize=12),
-        name = "log2(((heavy)(medium))/light)",
-        show_row_names = F,
-        show_column_names=F,
-        #cluster_rows =T,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_TE,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_TE$Treatment,
-        column_gap = unit(0, "mm"),
-        row_km = 20,
-        row_gap = unit(0, "mm"),
-        border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
-
-#D278AE
-#AED29E
-#put it all together
-all3 <-p_per + p_LFC +p_TE
-#all3
-
-#first iteration plot save
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/compiled_heatmap_2h_unordered.pdf", 8,6, all3)
-
+#save clusters, re-order
 #get clusters----
-p_drawn <- draw(all3) #draw to lock in row clustering
+p_drawn <- draw(p) #draw to lock in row clustering
 p_drawn #run to show on screen and visually choose clusters
 
 #use LFC to determine order instead of transcript distribution
-p_LFC_drawn <-draw(p_LFC+p_TE)
-p_LFC_drawn
-rd <- row_order(p_LFC_drawn) #get row order & save
+rd <- row_order(p_drawn) #get row order & save
+#reorder to make sure order is 1:20 so we dont have issues when assigning clusters
+rd_ordered <- rd[order(as.numeric(names(rd)))] # make sure order is 1:20
 
 #get cluster gene lists
 cluster_list = list() #initialize empty list
 for(i in 1:20){
   cluster_list[[i]] = data.frame(Cluster = i, 
-                                 gene = c(rownames(H_LFC)[ rd[[i]]]))
+                                 gene = c(rownames(H_LFC)[rd_ordered[[i]]]))
 }
 cluster_df = do.call(bind_rows, cluster_list)
 
 #edit/condense clusters by eye
 cluster_df_edit = cluster_df %>%
                   mutate(old_cluster = Cluster, 
-                         Cluster = ifelse(old_cluster %in% c(16:20), 1,
-                                    ifelse(old_cluster %in% c(11:13), 2,
-                                    ifelse(old_cluster %in% c(10, 14:15), 3,
-                                    ifelse(old_cluster %in% c(6,8:9), 4,
-                                    ifelse(old_cluster %in% c(4,5,7), 5,
-                                           6)))))) %>%
+                         Cluster = ifelse(old_cluster %in% c(19:20), 1,
+                                        ifelse(old_cluster %in% c(15:18), 2,
+                                               ifelse(old_cluster %in% c(13:14), 3,
+                                                      ifelse(old_cluster %in% c(10:12), 4,
+                                                             ifelse(old_cluster %in% c(7:9), 5,
+                                                                    ifelse(old_cluster %in% c(4,6), 6, 
+                                                                           ifelse(old_cluster %in% c(3,5), 7, 8))))))
+                                          )) %>%
                   arrange(Cluster)
+
 rownames(cluster_df_edit) = cluster_df_edit$gene
 
-write.csv(as.matrix(cluster_df_edit), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/20231108_2h_compiledHeatmap_clusters.csv"))
+write.csv(as.matrix(cluster_df_edit), 
+          path(output_dir,
+                 "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/20240108_2h6h_compiled_lfc_heatmap_fdr0.1_lfc0.5_8-clusters.csv"))
 
-#re-make heatmap with clusters----
-#re-order all input matrices according to cluster order then re-draw
-#also add left annotation with cluster info for splitting
-gene_order = cluster_df_edit$gene
-H_per_scale_reorder = H_per_scale[gene_order,]
-H_LFC_reorder = H_LFC[gene_order,]
-H_TE_reorder = H_TE[gene_order,]
-leftAnnot = cluster_df_edit
+#re-order H_LFC and re-draw heatmap (please make a function for this soon kate!!!!)----
+H_LFC_reorder = H_LFC[cluster_df_edit$gene,]
+
+topAnnot_LFC = data.frame(Name = colnames(H_LFC_reorder)) %>%
+               separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
+               mutate(`Polysome Fraction` = gsub("L", "Light",
+                                               gsub("M", "Medium", 
+                                                    gsub("H", "Heavy", `Polysome Fraction`))),
+                    `Polysome Fraction` = factor(`Polysome Fraction`, 
+                                                 levels = c("Total", "Light", "Medium", "Heavy"))) %>%
+               select(2,1) #reorder cols to match first heatmap
 
 
-#remake heatmaps
-#clean up redudancies in code later and generalize!
-p_per <-Heatmap(H_per_scale_reorder,
-        column_title = "% of Total mRNA in Pool (cpm)",
-        column_title_gp = gpar(fontsize=12),
-        name = "Avg_pool_cpm / Avg_input_cpm \n(row normalized)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_rows =F,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_per,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                           "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_per$Treatment,
-        column_gap = unit(0, "mm"),
-        border = T,
-        #row_km = 20,
-        row_split = leftAnnot$Cluster,
-        row_title_gp = gpar(fontsize=7),
-        row_gap = unit(0, "mm"),
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(min(H_per_scale),-1, 0, max(H_per_scale)), 
-                         c("white", "white","#B9CEE6","#707FA1"))
-        )
-p_per
-
-p_LFC <-Heatmap(H_LFC_reorder,
+left_annot = cluster_df_edit %>% select(Cluster)
+  
+p<-Heatmap(H_LFC_reorder,
         column_title = "LFC",
         column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=7),
+        cluster_row_slices = T,
         name = "log2(treated/control)",
         show_row_names = F,
         show_column_names=F,
-        cluster_rows =F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
+        cluster_rows = F,
         cluster_columns = F,
         top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
+                                   `Polysome Fraction` = c("Total" = "white",
+                                                          "Light" = "#68C3A5", 
                                                           "Medium" ="#539C84",
                                                           "Heavy" ="#3E7563")),
                           border = T,
                           show_legend = F,
                           annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
+        left_annotation = rowAnnotation(Cluster = left_annot$Cluster,
+                                            col = list(Cluster = 
+                                                         c(`1` = "#ED6868",
+                                                           `2` = "#F4908E",
+                                                           `3` = "#EED290",
+                                                           `4` = "#5BABA4",
+                                                           `5` = "#A6DFF7",
+                                                           `6` = "#A5C7DE",
+                                                           `7` = "#C0ACD0",
+                                                           `8` = "#9E7FB8"))
+                                       ),
         column_split = topAnnot_LFC$Treatment,
-        column_gap = unit(0, "mm"),
+        column_gap = unit(3, "mm"),
         #row_km = 20,
-        row_split = leftAnnot$Cluster,
+        row_split = left_annot$Cluster,
         row_gap = unit(0, "mm"),
         border = T,
         #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
+        col = colorRamp2(c(-4,-0.1, 0, 0.1, 4), c("blue","white","white", "white", "red"))
         )
-p_per + p_LFC
 
-p_TE <- Heatmap(H_TE_reorder,
+#save intermediate heatmap
+do_plot("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/LFC_2h-6h_fdr0.1_lfc0.5_8-clusters.pdf",
+        8,6,p2)
+```
+
+Now make TE heatmap
+```{r}
+#make TE heatmap
+H_TE = DE_LFC_thresh %>%
+        select(starts_with("TE")) %>%
+        as.matrix()
+
+#reorder data to match
+H_TE = H_TE[rownames(H_LFC_reorder), ]
+
+topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
+              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
+              #select(-Metric)
+              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
+                                  gsub("TE", "\U0394TE",
+                                        Metric)),
+                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))
+                     ) %>%
+              select(2,1) # reoder so color blocks appear correctly
+
+pTE2<-Heatmap(H_TE,
         column_title = "TE",
         column_title_gp = gpar(fontsize=12),
-        name = "log2(((heavy)(medium))/light)",
+        row_title_gp = gpar(fontsize=7),
+        name = "log2(polysome/total)",
         show_row_names = F,
         show_column_names=F,
-        cluster_rows =F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
+        cluster_rows =T,
         cluster_columns = F,
         top_annotation = HeatmapAnnotation(df = topAnnot_TE,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
+                                    Metric = c("\U0394TE" = "#AED29E")),
                           border = T,
                           show_legend = F,
                           annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
         column_split = topAnnot_TE$Treatment,
-        column_gap = unit(0, "mm"),
-        #row_km = 20,
-        row_split = leftAnnot$Cluster,
+        column_gap = unit(1.5, "mm"),
+        row_km = 30,
         row_gap = unit(0, "mm"),
         border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
+        col = colorRamp2(c(-1.5,-1,0,1,1.5), c("darkblue","#8C9FCA","white", "orangered","firebrick")))
 
-
-all3_ordered = p_per + p_LFC + p_TE
-
-#save plot
-#she's beautiful i love her lets save it!
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/20231108_2h_compiledHeatmap.pdf",8,6, all3_ordered)
-```
-Repeat but for 6h timepoint
-```{r}
-
-#prep data and make heatmaps----
-#filter percent of transcript data by our 2883 sig. TE genes
-#and remake heatmap
-#4 genes were not DE but were TE
-#"Trpm7"      "Spata6"     "Rpl36a.ps3" "Gm8355"  
-#for the time being ill just remove since i dont think we care
-
-#do one timepoint at at time for easier visualization
-#2542 genes that are unique to 6h timepoint
-#DE_LFC_thresh[rownames(DE_LFC_thresh) %in% rownames(log2FC.all.binary %>% data.frame() %>% filter(TE_LSG6h != 0))],
-H_per6 = H[rownames(H) %in% rownames(H_per), !(grepl("2h", colnames(H)))]
-
-H_per_scale6 = H_per6 %>%
-               t() %>%
-               scale() %>%
-               t()
-
-topAnnot_per6 = top_annot %>%
-               filter(Treatment != "LSG2h") %>%
-               mutate(Pool = gsub("Pool1", "Light",
-                      gsub("Pool2", "Medium",
-                      gsub("Pool3", "Heavy", Pool))),
-                      Pool = factor(Pool, 
-                                    levels = c("Light", "Medium", "Heavy"))) %>%
-               rename("Polysome Fraction" = Pool)
-
-p_per6 <-Heatmap(H_per_scale6,
-        column_title = "% of Total mRNA in Pool (cpm)",
-        column_title_gp = gpar(fontsize=12),
-        name = "Avg_pool_cpm / Avg_input_cpm \n(row normalized)",
-        show_row_names = F,
-        show_column_names=F,
-        #cluster_rows =T,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_per6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                           "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_per6$Treatment,
-        column_gap = unit(0, "mm"),
-        border = T,
-        row_km = 20,
-        row_title_gp = gpar(fontsize=7, angle = 0),
-        row_gap = unit(0, "mm"),
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(min(H_per_scale),-1, 0, max(H_per_scale)), 
-                         c("white", "white","#B9CEE6","#8C9FCA"))
-        )
-
-#"#B9CEE6","#8C9FCA"
-#remake LFC heatmap
-#use LFC data we have now from TE analysis
-H_LFC6 = DE_LFC_thresh %>%
-        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
-        select(contains("6h")) %>%
-        as.matrix()
-
-#reorder data to match
-H_LFC6 = H_LFC6[rownames(H_per_scale_reorder),]
-H_LFC_scale = H_LFC %>%
-              t() %>%
-              scale() %>%
-              t()
-
-topAnnot_LFC6 = data.frame(Name = colnames(H_LFC6)) %>%
-             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
-             mutate(`Polysome Fraction` = gsub("L", "Light",
-                                               gsub("M", "Medium", 
-                                                    gsub("H", "Heavy", `Polysome Fraction`))),
-                    `Polysome Fraction` = factor(`Polysome Fraction`, 
-                                                 levels = c("Light", "Medium", "Heavy"))) %>%
-             select(2,1) #reorder to match first heatmap
-  
-
-p_LFC6 <-Heatmap(H_LFC6,
-        column_title = "LFC",
-        column_title_gp = gpar(fontsize=12),
-        name = "log2(treated/control)",
-        show_row_names = F,
-        show_column_names=F,
-        #cluster_rows =T,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_LFC6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                          "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_LFC6$Treatment,
-        column_gap = unit(0, "mm"),
-        row_km = 20,
-        row_gap = unit(0, "mm"),
-        border = T,
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
-        )
-intermed_p6 <- p_per6 + p_LFC6
-#p_LFC
-intermed_p6
-
-#save intermediate heatmap
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/complexHeatmap/percent-transcript_PLUS_LFC_2542genes_6h.pdf",
-        8,6,intermed_p6)
-
-#make TE heatmap
-H_TE6 = DE_LFC_thresh %>%
-        select(contains("mRNA"), contains("TE")) %>%
-        as.matrix()
-
-#reorder data to match
-H_TE6 = H_TE6[rownames(H_per_scale_reorder), !grepl("2h", colnames(H_TE6))]
-
-topAnnot_TE6 = data.frame(Name = colnames(H_TE6)) %>%
-              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
-              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
-                                   gsub("TE", "\U0394TE",
-                                        Metric)),
-                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))) %>%
-              select(2,1) # reoder so color blocks appear correctly
-
-p_TE6 <- Heatmap(H_TE6,
-        column_title = "TE",
-        column_title_gp = gpar(fontsize=12),
-        name = "log2(((heavy)(medium))/light)",
-        show_row_names = F,
-        show_column_names=F,
-        #cluster_rows =T,
-        row_title_gp = gpar(fontsize = 7),
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_TE6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_TE6$Treatment,
-        column_gap = unit(0, "mm"),
-        row_km = 20,
-        row_gap = unit(0, "mm"),
-        border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
-
-#D278AE
-#AED29E
-#put it all together
-all3_6h <-p_per6 + p_LFC6 +p_TE6
-#all3
+#put LFC + TE together
+pCombn<-p2 +pTE
+pCombn<-draw(pCombn)
+rd2 <- row_order(pCombn) #get row order for ordering csv files
 
 #first iteration plot save
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/compiled_heatmap_2h_unordered.pdf", 8,6, all3)
+do_plot("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/lfc_te_2h6h_fdr0.1_lfc0.5_arrangedByLFC.pdf", 8,6, pCombn)
 
-#get clusters----
-p_drawn6 <- draw(all3_6h) #draw to lock in row clustering
-p_drawn6 #run to show on screen and visually choose clusters
+#try ordering by TE instead of LFC
+pTE+p2
 
-#use LFC to determine order instead of transcript distribution
-p_LFC_drawn6 <-draw(p_TE6+p_LFC6)
-p_LFC_drawn6
-rd <- row_order(p_LFC_drawn6) #get row order & save
+#check that both heatmaps are ordered the same before binding 
+#sum(rownames(H_LFC_reorder) != rownames(H_TE)) > 0
 
-#get cluster gene lists
-cluster_list6 = list() #initialize empty list
-for(i in 1:20){
-  cluster_list6[[i]] = data.frame(Cluster = i, 
-                                 gene = c(rownames(H_LFC6)[ d[[i]]]))
-}
-cluster_df_6h = do.call(bind_rows, cluster_list6)
-
-#edit/condense clusters by eye
-cluster_df_edit_6h = cluster_df_6h %>%
-                  mutate(old_cluster = Cluster, 
-                         Cluster = ifelse(old_cluster %in% c(16,18:20), 1,
-                                    ifelse(old_cluster %in% c(15:16), 2,
-                                    ifelse(old_cluster %in% c(14), 3,
-                                    ifelse(old_cluster %in% c(13), 4,
-                                    ifelse(old_cluster %in% c(12), 6,
-                                    ifelse(old_cluster %in% c(10:11), 7,
-                                    ifelse(old_cluster %in% c(8:9), 9,
-                                    ifelse(old_cluster %in% c(6,7), 10, 
-                                    ifelse(old_cluster %in% c(5,2), 11, 
-                                           12)))))))))) %>%
-                  arrange(Cluster)
-rownames(cluster_df_edit_6h) = cluster_df_edit_6h$gene
-
-#write.csv(as.matrix(cluster_df_edit_6h), path(output_dir, #"TE_analysis/FDR0.01/FDR0.01_LFC1/20231109_6h_compiledHeatmap_clusters_12Clusters.csv"))
-
-#re-make heatmap with clusters----
-#re-order all input matrices according to cluster order then re-draw
-#also add left annotation with cluster info for splitting
-gene_order6 = cluster_df_edit_6h$gene
-H_per_scale_reorder6 = H_per_scale6[gene_order6,]
-H_LFC_reorder6 = H_LFC6[gene_order6,]
-H_TE_reorder6 = H_TE6[gene_order6,]
-leftAnnot6 = cluster_df_edit_6h
+morpheus_heatmap = cbind(H_LFC_reorder, H_TE, Cluster = cluster_df_edit$Cluster) %>%
+                   data.frame() %>%
+                   select(Cluster, ends_with("2h"), ends_with("6h"))
 
 
-#remake heatmaps
-#clean up redudancies in code later and generalize!
-p_per6 <-Heatmap(H_per_scale_reorder6,
-        column_title = "% of Total mRNA in Pool (cpm)",
-        column_title_gp = gpar(fontsize=12),
-        name = "Avg_pool_cpm / Avg_input_cpm \n(row normalized)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_rows =F,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_per6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                           "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_per6$Treatment,
-        column_gap = unit(0, "mm"),
-        border = T,
-        #row_km = 20,
-        row_split = leftAnnot6$Cluster,
-        row_title_gp = gpar(fontsize=7),
-        row_gap = unit(0, "mm"),
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(min(H_per_scale),-1, 0, max(H_per_scale)), 
-                         c("white", "white","#B9CEE6","#707FA1"))
-        )
-p_per6
+write.csv(as.matrix(morpheus_heatmap), 
+          path(output_dir, "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/morpheus_heatmaps/20240112_fdr0.1_lfc0.5_clusterorder_undedited.csv"))
 
-p_LFC6 <-Heatmap(H_LFC_reorder6,
-        column_title = "LFC",
-        column_title_gp = gpar(fontsize=12),
-        name = "log2(treated/control)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_rows =F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_LFC6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                          "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_LFC6$Treatment,
-        column_gap = unit(0, "mm"),
-        #row_km = 20,
-        row_split = leftAnnot6$Cluster,
-        row_gap = unit(0, "mm"),
-        border = T,
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
-        )
-p_per6 + p_LFC6
 
-p_TE6 <- Heatmap(H_TE_reorder6,
-        column_title = "TE",
-        column_title_gp = gpar(fontsize=12),
-        name = "log2(((heavy)(medium))/light)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_rows =F,
-        cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = topAnnot_TE6,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = topAnnot_TE6$Treatment,
-        column_gap = unit(0, "mm"),
-        #row_km = 20,
-        row_split = leftAnnot6$Cluster,
-        row_gap = unit(0, "mm"),
-        border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
-
-all3_ordered_6h = p_per6 + p_LFC6 + p_TE6
-#plotting LFC and TE only ---- (need to have same # rows and be ordered the same)
-temp2 <- p_LFC + p_TE + p_LFC6 + p_TE6
-#save plot
-#she's beautiful i love her lets save it!
-#do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/6h/20231109_6h_compiledHeatmap_12Clusters.pdf",8,6, #all3_ordered_6h)
+#visualize in morpheus and re-assign genes visually to fit aesthetically appropriate clusters
 ```
 
+Remake LFC + TE heatmaps based on manually edited/re-assigned clusters (pulling out groups of genes where LFC and TE are in the opposite direction to be in their own clusters to make things easier to see visually)
 ```{r}
-set.seed(123)
+#import manually assigned cluster info
+manual_assnmt = read_csv(path(output_dir,
+                              "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/morpheus_heatmaps/20240112_manually_reassigned_clusters.csv"))
 
-#2h----
-H_per = H[rownames(H) %in% rownames(DE_LFC_thresh), !(grepl("6h", colnames(H)))]
+cluster_df_manual = cluster_df_edit %>%
+                    rename(Original= old_cluster,
+                           Intermediate = Cluster) %>%
+                    mutate(Cluster = ifelse(gene %in% manual_assnmt$Gene[manual_assnmt$Categorization == "neg"], 9,
+                                          ifelse(gene %in% manual_assnmt$Gene[manual_assnmt$Categorization == "pos"], 10, 
+                                                 Intermediate))) %>%
+                    arrange(Cluster)
 
-#LFC heatmap
-#use LFC data we have now from TE analysis
-H_LFC = DE_LFC_thresh %>%
-        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
-        select(contains("2h")) %>%
-        as.matrix()
+cluster_df_manual2 =  cluster_df_manual %>%
+                      rename(Manual1 = Cluster) %>%
+                      mutate(Cluster = ifelse(Manual1 %in% c(1,2), 1,
+                                          ifelse(Manual1 %in% c(3:5), Manual1-2,
+                                              ifelse(Manual1 == 6, 6,
+                                                  ifelse(Manual1 %in% c(7,8), 7, 
+                                                      ifelse(Manual1 == 9, 5,
+                                                          ifelse(Manual1 == 10, 4,
+                                                                 Manual1))))))) %>%
+                      arrange(Cluster)
 
-#reorder data to match
-H_LFC = H_LFC[rownames(H_per),]
-topAnnot_LFC = data.frame(Name = colnames(H_LFC)) %>%
-             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
-             mutate(`Polysome Fraction` = gsub("L", "Light",
+#re-save clusters!!!
+write.csv(as.matrix(cluster_df_manual2),
+          path(output_dir,
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/cluster_lists/20240115_final_7_clusters.csv"))
+
+H_LFC_reorder = H_LFC[cluster_df_manual2$gene,]
+
+topAnnot_LFC = data.frame(Name = colnames(H_LFC_reorder)) %>%
+               separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
+               mutate(`Polysome Fraction` = gsub("L", "Light",
                                                gsub("M", "Medium", 
                                                     gsub("H", "Heavy", `Polysome Fraction`))),
                     `Polysome Fraction` = factor(`Polysome Fraction`, 
-                                                 levels = c("Light", "Medium", "Heavy"))) %>%
-             select(2,1) #reorder to match first heatmap
-
-#make TE heatmap
-H_TE = DE_LFC_thresh %>%
-        select(contains("mRNA"), contains("TE")) %>%
-        as.matrix()
-#reorder data to match
-H_TE = H_TE[rownames(H_per), !grepl("6h", colnames(H_TE))]
-topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
-              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
-              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
-                                   gsub("TE", "\U0394TE",
-                                        Metric)),
-                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))) %>%
-              select(2,1) # reoder so color blocks appear correctly
-
-#6h----
-H_per6 = H[rownames(H) %in% rownames(H_per), !(grepl("2h", colnames(H)))]
+                                                 levels = c("Total", "Light", "Medium", "Heavy"))) %>%
+               select(2,1) #reorder cols to match first heatmap
 
 
-topAnnot_per6 = top_annot %>%
-               filter(Treatment != "LSG2h") %>%
-               mutate(Pool = gsub("Pool1", "Light",
-                      gsub("Pool2", "Medium",
-                      gsub("Pool3", "Heavy", Pool))),
-                      Pool = factor(Pool, 
-                                    levels = c("Light", "Medium", "Heavy"))) %>%
-               rename("Polysome Fraction" = Pool)
-
-
-#remake LFC heatmap
-#use LFC data we have now from TE analysis
-H_LFC6 = DE_LFC_thresh %>%
-        select(starts_with("L"), starts_with("M"), starts_with("H")) %>%
-        select(contains("6h")) %>%
-        as.matrix()
-
-#reorder data to match
-H_LFC6 = H_LFC6[rownames(H_per),]
-topAnnot_LFC6 = data.frame(Name = colnames(H_LFC6)) %>%
-             separate(Name, into = c("Polysome Fraction", "Treatment"), sep = "_") %>%
-             mutate(`Polysome Fraction` = gsub("L", "Light",
-                                               gsub("M", "Medium", 
-                                                    gsub("H", "Heavy", `Polysome Fraction`))),
-                    `Polysome Fraction` = factor(`Polysome Fraction`, 
-                                                 levels = c("Light", "Medium", "Heavy"))) %>%
-             select(2,1) #reorder to match first heatmap
-
-
-#make TE heatmap
-H_TE6 = DE_LFC_thresh %>%
-        select(contains("mRNA"), contains("TE")) %>%
-        as.matrix()
-#reorder data to match
-H_TE6 = H_TE6[rownames(H_per), !grepl("2h", colnames(H_TE6))]
-
-
-
-#pool----
-
-#pool LFC and TE heatmaps then replot (assume order is constant)
-sum(rownames(H_LFC) == rownames(H_LFC6)) #check -- all good
-sum(rownames(H_TE) == rownames(H_TE6)) # also good
-H_LFC_pooled <- cbind(H_LFC, H_LFC6)
-H_TE_pooled <- cbind(H_TE, H_TE6)
-
-#annotations
-LFC_pooled_annot <- rbind(topAnnot_LFC, topAnnot_LFC6)
-TE_pooled_annot <- rbind(topAnnot_TE, topAnnot_TE6)
-
-#heatmaps
-p_LFC_pooled <- Heatmap(H_LFC_pooled,
+left_annot = cluster_df_manual2 %>% 
+             select(Cluster) %>%
+             mutate(split = ifelse(Cluster %in% c(1:5), "TE_up", "TE_down"),
+                    split = factor(split, levels = c("TE_up", "TE_down")))
+  
+p<-Heatmap(H_LFC_reorder,
         column_title = "LFC",
         column_title_gp = gpar(fontsize=12),
         row_title_gp = gpar(fontsize=7),
-        name = "log2(treated/control)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_rows = T,
         cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = LFC_pooled_annot,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
-                                                          "Medium" ="#539C84",
-                                                          "Heavy" ="#3E7563")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = LFC_pooled_annot$Treatment,
-        column_gap = unit(0, "mm"),
-        row_km = 20,
-        #row_split = leftAnnot6$Cluster,
-        row_gap = unit(0, "mm"),
-        border = T,
-        #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
-        )
-p_TE_pooled <- Heatmap(H_TE_pooled,
-        column_title = "TE",
-        column_title_gp = gpar(fontsize=12),
-        row_title_gp = gpar(fontsize = 7),
-        name = "log2(((heavy)(medium))/light)",
-        show_row_names = F,
-        show_column_names=F,
-        cluster_rows =T,
-        cluster_row_slices = T,
-        #row_order = gene_order,
-        cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = TE_pooled_annot,
-                         col = list(Treatment = c(Control = "grey",
-                                                   LSG2h = "#F89F7C",
-                                                  LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
-                          border = T,
-                          show_legend = F,
-                          annotation_label = c("",""),
-                          annotation_name_gp = gpar(fontsize = 8)),
-        column_split = TE_pooled_annot$Treatment,
-        column_gap = unit(0, "mm"),
-        row_km = 20,
-        #row_split = leftAnnot_pool$Cluster,
-        row_gap = unit(0, "mm"),
-        border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
-
-LFC_pooled_drawn <- draw(p_TE_pooled + p_LFC_pooled)
-
-#get cluster info and reorder
-LFC_pooled_drawn
-rd <- row_order(LFC_pooled_drawn) #get row order & save
-
-#save plot for now
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/20231113_LFC_TE_2-6h_20Clusters.pdf",8,6,LFC_pooled_drawn)
-
-#get cluster gene lists
-cluster_list_pooled = list() #initialize empty list
-for(i in 1:20){
-  cluster_list_pooled[[i]] = data.frame(Cluster = i, 
-                             gene = c(rownames(H_TE_pooled)[ rd[[i]]]))
-}
-cluster_df_pooled = do.call(bind_rows, cluster_list_pooled)
-
-#edit/condense clusters by eye
-cluster_df_edit_pooled = cluster_df_pooled %>%
-                         mutate(old_cluster = Cluster, 
-                         Cluster = ifelse(old_cluster %in% c(15:20), 1,
-                                    ifelse(old_cluster %in% c(13,14), 2,
-                                    ifelse(old_cluster %in% c(6:9), 3,
-                                    ifelse(old_cluster %in% c(10:12), 4,
-                                    ifelse(old_cluster %in% c(5), 5, 
-                                    ifelse(old_cluster %in% c(2,3), 6, 
-                                    ifelse(old_cluster %in% c(1,4), 7, 7)))))))) %>%
-                         arrange(Cluster)
-
-rownames(cluster_df_edit_pooled) = cluster_df_edit_pooled$gene
-
-write.csv(as.matrix(cluster_df_edit_pooled), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/20231113_pooledLFC_TE_compiledHeatmap_7-Clusters_cluster-info.csv"))
-
-#make final plots
-gene_order_pool <- cluster_df_edit_pooled$gene
-H_LFC_pooled_reorder <- H_LFC_pooled[gene_order_pool,]
-H_TE_pooled_reorder <- H_TE_pooled[gene_order_pool,]
-
-leftAnnot_pool <- cluster_df_edit_pooled
-
-p_LFC_pooled2 <- Heatmap(H_LFC_pooled_reorder,
-        column_title = "LFC",
-        column_title_gp = gpar(fontsize=12),
-        row_title_gp = gpar(fontsize=7),
         name = "log2(treated/control)",
         show_row_names = F,
         show_column_names=F,
         cluster_rows = F,
-        cluster_row_slices = F,
-        #row_order = gene_order,
         cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = LFC_pooled_annot,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   `Polysome Fraction` = c("Light" = "#68C3A5", 
+                                   `Polysome Fraction` = c("Total" = "white",
+                                                          "Light" = "#68C3A5", 
                                                           "Medium" ="#539C84",
                                                           "Heavy" ="#3E7563")),
                           border = T,
                           show_legend = F,
                           annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
-        column_split = LFC_pooled_annot$Treatment,
-        column_gap = unit(0, "mm"),
+        left_annotation = rowAnnotation(Cluster = left_annot$Cluster,
+                                            col = list(Cluster = 
+                                                         c(`1` = "#ED6868",
+                                                           `2` = "#F4908E",
+                                                           `3` = "#EED290",
+                                                           `4` = "#AED29E",
+                                                           `5` = "#5BABA4",
+                                                           `6` = "#A6DFF7",
+                                                           `7` = "#A5C7DE",
+                                                           `8` = "#C0ACD0",
+                                                           `9` = "#9E7FB8",
+                                                           `10` = "#AE9492"
+                                                           ),
+                                        annotation_label = "")
+                                       ),
+        column_split = topAnnot_LFC$Treatment,
+        column_gap = unit(3, "mm"),
         #row_km = 20,
-        row_split = leftAnnot_pool$Cluster,
-        row_gap = unit(0, "mm"),
+        row_split = left_annot$Cluster,
+        row_gap = unit(c(rep(0,3),3,rep(0,2)), "mm"),
         border = T,
         #border_gp = gpar(col = "black", lwd = 2), 
-        col = colorRamp2(c(-2.25,-0.3, 0, 0.3, 2.25), c("blue","white","white", "white", "red"))
+        col = colorRamp2(c(-4,-0.1, 0, 0.1, 4), c("blue","white","white", "white", "red"))
         )
 
-p_TE_pooled2 <- Heatmap(H_TE_pooled_reorder,
+#TE heatmap
+H_TE =  DE_LFC_thresh %>%
+        select(starts_with("TE")) %>%
+        as.matrix()
+
+#reorder data to match
+H_TE = H_TE[rownames(H_LFC_reorder), ]
+
+topAnnot_TE = data.frame(Name = colnames(H_TE)) %>%
+              separate(Name, into = c("Metric", "Treatment"), sep = "_") %>%
+              #select(-Metric)
+              mutate(Metric = gsub("delta.mRNA", "\U0394mRNA",
+                                  gsub("TE", "\U0394TE",
+                                        Metric)),
+                     Metric = factor(Metric, levels = c("\U0394mRNA", "\U0394TE"))
+                     ) %>%
+              select(2,1) # reoder so color blocks appear correctly
+
+pT <-Heatmap(H_TE,
         column_title = "TE",
         column_title_gp = gpar(fontsize=12),
-        name = "log2(((heavy)(medium))/light)",
+        row_title_gp = gpar(fontsize=7),
+        name = "log2(polysome/total)",
         show_row_names = F,
         show_column_names=F,
-        cluster_rows =F,
         cluster_row_slices = T,
-        #row_order = gene_order,
+        cluster_rows =F,
         cluster_columns = F,
-        top_annotation = HeatmapAnnotation(df = TE_pooled_annot,
+        top_annotation = HeatmapAnnotation(df = topAnnot_TE,
                          col = list(Treatment = c(Control = "grey",
                                                    LSG2h = "#F89F7C",
                                                   LSG6h = "#F68064"),
-                                   Metric = c("\U0394mRNA" ="#D278AE",
-                                              "\U0394TE" = "#AED29E")),
+                                    Metric = c("\U0394TE" = "#AED29E")),
                           border = T,
                           show_legend = F,
                           annotation_label = c("",""),
                           annotation_name_gp = gpar(fontsize = 8)),
-        column_split = TE_pooled_annot$Treatment,
-        column_gap = unit(0, "mm"),
-        #row_km = 20,
-        row_split = leftAnnot_pool$Cluster,
+        column_split = topAnnot_TE$Treatment,
+        column_gap = unit(1.5, "mm"),
+        row_split = left_annot,
+        #row_km = 30,
         row_gap = unit(0, "mm"),
         border = T,
-        col = colorRamp2(c(-3,-1.5,-0.5 ,0,0.5, 1.5,3), c("darkblue", "#8C9FCA",
-                                                            "white", "white", "white",
-                                                           "orangered","firebrick")))
-#save even though clusters are wrong
-p_LFC_pooled2 + p_TE_pooled2
-do_plot("TE_analysis/FDR0.01/FDR0.01_LFC1/ComplexHeatmap/LFC_TE_2-6h_Compiled_8_Clusters.pdf", 8, 6, temp)
+        col = colorRamp2(c(-1.5,-1,0,1,1.5), c("darkblue","#8C9FCA","white", "orangered","firebrick")))
 
+final <- p+pT
+do_plot("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/20240112_lfc_te_2h6h_fdr0.1_lfc0.5_arrangedByLFC_manual-edit3-7clusters.pdf", 8,6, final)
 ```
+
 
 
 #mRNA v TE correlation plot
