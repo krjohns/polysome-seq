@@ -1385,45 +1385,14 @@ write.csv(as.matrix(int_genes_sig), path(output_dir, "TE_analysis/FDR0.01/FDR0.0
 
 #single gene cpm plots
 ```{r}
-int_genes <- list(h2 = c("Bcl2l1", "Ccl5", "Eif1", "Eif3e", "Eif3f", "H2.M3",
-                      "H2.Q7", "Jun", "Polr2g", "Rack1", "S100a4", "Saa3"),
-                  h6 = c("Cd47", "Cdkn1a","Eef1g","Eif1a","Irak2", "Irf9", "Nfat5",
-                      "Notch2", "Polr1c", "Runx3", "Traf6"),
-                  shared = c("Btf3","Eef1a1", "Eef2", "Fau", "Gdf15", "Serpinb6b", "Traf5"))
-
-cluster_genes <- list(cluster1 = c( "Rsad2", "Il6", 
-                                   "Ifnb1",  "Isg15"),
-                      cluster2 = c( "Rpl11", "Rpl27", "Gdf15","Rack1"),
-                      cluster3 = c( "Jun","Kras", "Marco", "Psmb7"),
-                      cluster4 = c("Gstp1",  "Ndufs7", "Acadm", "Aldh3b1"),
-                      cluster5 = c("Runx1", "Tgfbr1", "Btk",
-                                   "Eif4ebp2"),
-                      cluster6 = c("Cebpa", "Myc", "Foxo3", "Il6ra"))
-
-cluster_genes2 <- list(cluster1 = c("Oas1a", "Rsad2", "Nlrp3", "Cd86",
-                                   "Irf7", "Cxcl10", "Il6", "Ifna2",
-                                   "Ifnb1", "Ifit2", "Ifit3", "Isg15",
-                                   "Tlr2"),
-                      cluster2 = c("Rps15", "Rpl11", "Rpl27", "Gdf15",
-                                   "Eef2", "Eif3e", "Rack1"),
-                      cluster3 = c("Bcl2l1", "Zeb1", "Notch2", "Jun",
-                                   "Kras", "Irak2", "Clec2d", "Marco",
-                                   "Traf3", "Traf6", "Tap2", "Irf8",
-                                   "Ccr7", "Psmb7", "Stat1", "Stat3",
-                                   "Cnot4", "Ubr4"),
-                      cluster4 = c("Gstp1", "Timm22", "Ndufs7",
-                                   "Nudt2", "Acadm", "Aldh3b1",
-                                   "Me2"),
-                      cluster5 = c("Mrpl12", "Slc25a30", "Pus1",
-                                   "Runx1", "Tgfbr1", "Btk", "Irak4",
-                                   "Eif4ebp2"),
-                      cluster6 = c("Cebpa", "Myc", "Foxo3"))
-
+interesting_genes = read_csv(path(output_dir,
+    "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/cluster_lists/20240115_TE_genes-of-interest_by-cluster_short.csv"))
+                                   
 #prep cpm data for plotting
 cpm_df_cluster = cpm_all %>%
               data.frame() %>%
               rownames_to_column(var = "gene") %>%
-              filter(gene %in% (cluster_genes %>% unlist())) %>%
+              filter(gene %in% interesting_genes$gene %>% unlist()) %>%
               #select(c("gene", contains("Pool"))) %>%
               pivot_longer(cols = -gene, 
                            names_to = "Treatment_Rep_Pool",
@@ -1431,38 +1400,75 @@ cpm_df_cluster = cpm_all %>%
               separate(Treatment_Rep_Pool, 
                        into = c("Treatment", "Rep", "Pool"), 
                        sep = "_") %>%
+              #drop polysome pools (calculated from counts at the beginning)
+              filter(!(grepl("Polysome", Pool))) %>%
               pivot_wider(names_from = "Rep", values_from = "cpm") %>%
               #calculate average and se
-              mutate(Pool = ifelse(Pool == "Input", 0, as.numeric(gsub("Pool", "", Pool))),
-                     Avg_cpm = (Rep1 + Rep2 + Rep3)/3,
-                     se = sqrt(((Rep1-Avg_cpm)^2 + (Rep2-Avg_cpm)^2 +
-                                  (Rep3-Avg_cpm)^2)/3)/sqrt(3))
+              mutate(
+              Pool = ifelse(Pool == "Input", 0, 
+                as.numeric(gsub("Pool", "", Pool))),
+              Avg_cpm = ifelse(is.na(Rep1), (Rep2 + Rep3)/2, (Rep1 + Rep2 + Rep3)/3),
+              se = ifelse(is.na(Rep1),  
+                sqrt(((Rep2-Avg_cpm)^2+(Rep3-Avg_cpm)^2)/2)/sqrt(2),
+                sqrt(((Rep1-Avg_cpm)^2+(Rep2-Avg_cpm)^2+(Rep3-Avg_cpm)^2)/3)/sqrt(3))
+              ) %>%
+             full_join(interesting_genes, by = "gene")
 #plot
-for(i in 1:6){
-  p<-ggplot(cpm_df_cluster %>% filter(gene %in% cluster_genes[[i]]),
-       aes(x = Pool, y = Avg_cpm, color = Treatment)) +
-       geom_line(size=1) +
-       geom_point() +
-       geom_errorbar(aes(ymin=Avg_cpm - se, ymax= Avg_cpm + se),
-                     width=0.25, size=1) +
-       scale_color_manual(values = c(Control = "grey",
+p_list <- list() #initialize empty list
+for(i in c(1:7)){
+ p_list[[i]]  <- ggplot(cpm_df_cluster %>% 
+       filter(gene %in% (interesting_genes %>% 
+                                filter(Cluster == i) %>%
+                                select(gene) %>%
+                                unlist())),
+       aes(x = Pool, y = Avg_cpm, fill = Treatment)) +
+       geom_bar(position = "dodge", width =0.75, stat = "identity", color = "black") +
+       #geom_point() +
+       geom_errorbar(position = position_dodge(width=0.75), 
+                     aes(x = Pool, ymin=Avg_cpm - se, ymax= Avg_cpm + se),
+                     width=0.5, size=0.5) +
+       scale_fill_manual(values = c(Control = "grey",
                                      LSG2h = "#FAC5B0",
                                      LSG6h = "#F68064")) +
        facet_wrap(~gene, scales="free_y", nrow=1) +
-       labs(x = "Polysome Pool", title = str_c("Cluster",
-                                               as.character(i))) +
-       theme(legend.position = "bottom")
+       #scale_y_continuous(labels = function(x) format(x, scientific = TRUE)) +
+       labs(y = str_c("Cluster ", as.character(i))) +
+       #labs(x = ifelse(i==7, "Polysome Pool", element_blank())) +
+       theme(text = element_text(size=rel(3)),
+             legend.position = "none",
+             strip.text.x = element_text(size=rel(1.7)),
+             axis.text.x = element_blank(),
+             axis.text.y = element_text(size =rel(1.5)),
+             axis.title.x = element_blank(),
+             axis.title.y = element_text(size=rel(1.75), face = "bold"),
+             plot.margin = unit(c(0.001, 0.00001, 0.001, 0.00001), "inches"))
 
 save_plot(path(output_dir,
-               str_c("TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA_TE_correlation/TE_up_gene-lists/single_gene_plots/Clusters/Mini_clusters/LSG2h_heatmap_Cluster_",
-                     as.character(i), ".pdf")),
-          p)
-
+               str_c("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/Cluster_",
+                     as.character(i), "_short_legend.pdf")),
+          p_list[[i]])
 }
 
+
+#add x axis text to bottom plot
+p_list[[7]] = p_list[[7]] +
+         theme(axis.text.x = element_text(size = rel(1.75)))
+
+p_grid <- ggarrange(plotlist = p_list, ncol=1, align = "hv") 
+#p_grid <- annotate_figure(p_grid, 
+                         # top = "Average cpm",
+                          #bottom = "Polysome Pool")
+save_plot(path(output_dir,
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/heatmap_clusters/compiled_cluster_grid.pdf"),
+          p_grid,
+          base_aspect_ratio=1)
+
+
 #save df
-write.csv(as.matrix(cpm_df_int_test), path(output_dir,
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/mRNA_TE_correlation/TE_up_gene-lists/single_gene_plots/cpm_df_int_genes.csv"))
+write.csv(as.matrix(cpm_df_cluster), path(output_dir,
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/cluster_lists/20240115_single_gene_plot_cpm_values-by_cluster.csv"))
+
+
 ```
 
 
