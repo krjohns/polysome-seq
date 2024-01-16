@@ -1358,7 +1358,7 @@ mini_binary <- cbind(gene = rownames(log2FC.all.binary),
 
 #consider adding additional columns for different FDRs
 comparison_df = log2FC.all %>%
-                select(contains("Total"), starts_with("TE")) %>%
+                #select(contains("Total"), starts_with("TE")) %>%
                 rownames_to_column("gene") %>%
                 merge(mini_binary, by = "gene") %>%
                 pivot_longer(-c(gene, contains("sig")), names_to = "metric", values_to = "LFC") %>%
@@ -1392,13 +1392,18 @@ comparison_df = log2FC.all %>%
                                                               "mRNA UP (no \U0394 TE)", "mRNA DOWN (no \U0394 TE)",
                                                               "mRNA UP and TE DOWN", "mRNA DOWN and TE UP",
                                                               "no change")))
-   
 
-p<-ggplot(comparison_df, aes(x = `LFC_Total`, y = `LFC_TE`, color = category)) +
-  geom_point(data = subset(comparison_df, category == "no change"), size =0.75) +
-  geom_point(data = subset(comparison_df, category != "no change" & !(sig_Total != 0 | sig_TE != 0)),
+comparison_data_pivot = comparison_df %>%
+                        pivot_longer(cols = c(LFC_L:LFC_H), names_to = "Pool", values_to = "LFC_Pool") %>%
+                        mutate(Pool = gsub("LFC_L", "Pool 1 (1 rib.)", 
+                                           gsub("LFC_M", "Pool 2 (2-3 rib.)", 
+                                                gsub("LFC_H", "Pool 3 (4+ rib.)", Pool))))
+
+p<-ggplot(comparison_data_pivot, aes(x = `LFC_Total`, y = `LFC_Pool`, color = category)) +
+  geom_point(data = subset(comparison_data_pivot, category == "no change"), size =0.75) +
+  geom_point(data = subset(comparison_data_pivot, category != "no change" & !(sig_Total != 0 | sig_TE != 0)),
              size =0.75, color = "#BFBEBE") +
-  geom_point(data = subset(comparison_df, category != "no change" & (sig_Total != 0 | sig_TE != 0)), 
+  geom_point(data = subset(comparison_data_pivot, category != "no change" & (sig_Total != 0 | sig_TE != 0)), 
              size =0.75)  +
   scale_color_manual(values = c("#AED29E","#176533", "#D278AE","#EDC9DE", 
                                 "#FAA41A","#A6DFF7","#C0ACD0", "#9E7FB8","#BFBEBE"), drop = F) +
@@ -1408,22 +1413,21 @@ p<-ggplot(comparison_df, aes(x = `LFC_Total`, y = `LFC_TE`, color = category)) +
   geom_vline(xintercept = 0.5, color = "grey", linetype =2) +
   geom_vline(xintercept = -0.5, color = "grey", linetype =2) +
   facet_wrap(~Treatment, scales = "fixed") +
-  geom_text_repel(data = subset(comparison_df, LFC_TE > 0.5 & LFC_Total <0.5),
-                  aes(label = gene),
-                  color = "black",
-                  size = 2,
-                  max.overlaps = 25,
-                  min.segment.length = 0,
-                  #force_pull=10,
-                  box.padding=0.1,
-                  segment.size=0.2,
+  #geom_text_repel(data = subset(comparison_data_pivot, LFC_TE > 0.5 & LFC_Total <0.5),
+              #    aes(label = gene),
+               #   color = "black",
+               #   size = 2,
+               #   max.overlaps = 25,
+               #   min.segment.length = 0,
+               #   #force_pull=10,
+                #  box.padding=0.1,
+                #  segment.size=0.2,
                   #nudge_x = 0.25,
                   #nudge_y = 0.25,
-                  seed=123) +
-  ylim(0.5,3) +
-  xlim(-0.5, 7) +
-  labs(y = expression("log"["2"] ~ "FC  TE"),
-       x = expression("log"["2"] ~ "FC  Total mRNA")) +
+                #  seed=123) +
+  facet_wrap(~Pool) +
+  labs(y = expression("log"["2"] ~ "FC  Ribosomal mRNA"),
+       x = expression("log"["2"] ~ "FC  Total mRNA (Input)")) +
   theme_classic() +
   theme(strip.background = element_rect(color = "white"),
         strip.text = element_text(face = "bold", size = 14),
@@ -1436,7 +1440,7 @@ p<-ggplot(comparison_df, aes(x = `LFC_Total`, y = `LFC_TE`, color = category)) +
 
 
 save_plot(path(output_dir, 
-               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/20240116_TotalmRNA-v-TE-correlation_genes_labeled3.pdf"), 
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/20240116_TotalmRNA-v-Pool.pdf"), 
          p)
 ```
 
