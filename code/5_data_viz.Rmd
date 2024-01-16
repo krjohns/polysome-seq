@@ -1256,133 +1256,6 @@ do_plot("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/20240112_lfc_te_2h
 ```
 
 
-
-#mRNA v TE correlation plot
-```{r}
-
-mini_binary <- cbind(gene = rownames(log2FC.all.binary), 
-                       log2FC.all.binary %>% 
-                             select(contains("TE"), 
-                             contains("mRNA"))) %>%
-                rename_at(-1,~str_c(., "_sig"))
-
-#consider adding additional columns for different FDRs
-comparison_df = log2FC.all %>%
-                select(contains("mRNA"), contains("TE")) %>%
-                rownames_to_column("gene") %>%
-                merge(mini_binary, by = "gene") %>%
-                pivot_longer(-c(gene, contains("sig")), names_to = "metric", values_to = "LFC") %>%
-                separate(metric, into = c("metric", "Treatment"), sep = "_") %>%
-                mutate(metric = gsub("delta.mRNA", "LFC mRNA",
-                                     gsub("TE", "LFC TE", metric))) %>%
-                pivot_longer(contains("_sig"), names_to = "metric2", values_to = "sig") %>%
-                separate(metric2, into= c("metric2", "Treatment2", "junk"), sep = "_") %>%
-                filter(Treatment == Treatment2 & grepl("TE", metric) == grepl("TE", metric2)) %>%
-                select(-c(Treatment2, metric2, junk)) %>%
-                mutate(metric = gsub("LFC ", "", metric)) %>%
-                pivot_wider(names_from = "metric", values_from = c("LFC", "sig")) %>%
-                #categorize according to zhulyn et al definitions
-                mutate(category = ifelse(LFC_TE > 1 & LFC_mRNA < 1 & LFC_mRNA > -1,
-                                         "TE UP (no \U0394 mRNA)",
-                                         ifelse(LFC_TE < -1 & LFC_mRNA > -1,
-                                         "TE DOWN (no \U0394 mRNA)",
-                                         ifelse(LFC_TE > 1 & LFC_mRNA > 1,
-                                         "mRNA UP and TE UP",
-                                         ifelse(LFC_TE < -1 & LFC_mRNA < -1,
-                                         "mRNA DOWN and TE DOWN",
-                                         ifelse(LFC_TE < -1  & LFC_mRNA > 1,
-                                         "mRNA UP and TE DOWN",
-                                         ifelse(LFC_TE > 1  & LFC_mRNA < -1,
-                                         "mRNA DOWN and TE UP",
-                                         ifelse(LFC_TE < 1 & LFC_mRNA > 1,
-                                         "mRNA UP (no \U0394 TE)",
-                                         ifelse(LFC_TE > -1 & LFC_mRNA < -1,
-                                         "mRNA DOWN (no \U0394 TE)", "no change")))))))),
-                       category = factor(category, levels = c("TE UP (no \U0394 mRNA)", "TE DOWN (no \U0394 mRNA)",
-                                                              "mRNA UP and TE UP", "mRNA DOWN and TE DOWN",
-                                                              "mRNA UP (no \U0394 TE)", "mRNA DOWN (no \U0394 TE)",
-                                                              "mRNA UP and TE DOWN", "mRNA DOWN and TE UP",
-                                                              "no change")))
-
-
-MT_colors = c("#9E7FB8","#C0ACD0", "#ED6868", "#DA9B90","#F4908E", "#AE9492","#AED29E", "#5BABA4",
-              "#D278AE", "#A6DFF7", "#A5C7DE","#F29D65", "#EED290")
-zhulyn_colors = c("#6FBE44","#176533", "#C277B1", "#FAA41A", "#6D91CB", "#BFBEBE")
-   
-    #"#F6E4EE"
-
-mRNA_TE_plot <- ggplot(comparison_df, aes(x = `LFC_mRNA`, y = `LFC_TE`, color = category)) +
-  geom_point(data = subset(comparison_df, category == "no change"), size =0.75) +
-  geom_point(data = subset(comparison_df, category != "no change" & !(sig_mRNA != 0 | sig_TE != 0)),
-             size =0.75, color = "black") +
-  geom_point(data = subset(comparison_df, category != "no change" & (sig_mRNA != 0 | sig_TE != 0)), 
-             size =0.75)  +
-  scale_color_manual(values = c("#AED29E","#176533", "#D278AE","#EDC9DE", 
-                                "#FAA41A","#A6DFF7","#C0ACD0", "#9E7FB8","#BFBEBE"), drop = F) +
-  #add dashed lines for cut-offs
-  geom_hline(yintercept = 1, color = "grey", linetype =2) +
-  geom_hline(yintercept = -1, color = "grey", linetype =2) +
-  geom_vline(xintercept = 1, color = "grey", linetype =2) +
-  geom_vline(xintercept = -1, color = "grey", linetype =2) +
-  geom_smooth(method = 'lm',formula= y~x, se=F, col='black', size =0) +
-  stat_cor(aes(label = ..rr.label..),
-           label.y = 7, 
-           size=4, color = 'black') +
-  facet_wrap(~Treatment, scales = "fixed") +
-  xlim(-7.5,7.5) +
-  labs(y = expression("log"["2"] ~ "FC  TE"),
-       x = expression("log"["2"] ~ "FC  mRNA")) +
-  theme_classic() +
-  theme(strip.background = element_rect(color = "white"),
-        strip.text = element_text(face = "bold", size = 14),
-        legend.position = "bottom",
-        legend.text = element_text(size = 5),
-        legend.title = element_text(size=8),
-        legend.key.size = unit(0.1,'inches'),
-        panel.background = element_rect(color = "black"))
-
-
-save_plot(path(output_dir, 
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/20231115_mRNA-v-TE-correlation_zhulyn_all_genes.pdf"), 
-          mRNA_TE_plot)
-
-
-
-LSG2h <- comparison_df %>% 
-         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG2h")
-
-LSG6h <- comparison_df %>% 
-         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG6h")
-
-overlap<-LSG2h %>%
-         filter(gene %in% LSG6h$gene)
-
-LSG6h_only<-LSG6h %>%
-            filter(!(gene %in% LSG2h$gene))
-
-write.csv(as.matrix(LSG6h_only),
-          path(output_dir,
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG6h_UNIQUE.csv"))
-write.csv(as.matrix(LSG6h),
-          path(output_dir, 
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_LSG6h.csv"))
-write.csv(as.matrix(overlap),
-          path(output_dir, 
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01_overlap.csv"))
-
-#get group of genes that are interesting for follow-up
-int_genes <- subset(comparison_df, abs(`LFC mRNA`) < 1 & abs(`LFC TE`) > 1)
-int_genes_up <- subset(comparison_df, abs(`LFC mRNA`) < 1 & `LFC TE` > 1)
-int_genes_sig <- int_genes_up %>%
-                 left_join(mini_binary, by = "gene") %>%
-                 filter(!(TE_LSG2h == 0 & TE_LSG6h == 0)) %>%
-                 rename_at(c(5:6), ~str_c(., "_sig")) %>%
-                 mutate_at(c(5:6), ~as.logical(.)) %>%
-                 arrange(gene)
-
-write.csv(as.matrix(int_genes_sig), path(output_dir, "TE_analysis/FDR0.01/FDR0.01_LFC1/TE_up_mRNA_noChange_genes_LFC1_sigFDR0.01.csv"))
-```
-
 #single gene cpm plots
 ```{r}
 interesting_genes = read_csv(path(output_dir,
@@ -1461,7 +1334,7 @@ p_grid <- ggarrange(plotlist = p_list, ncol=1, align = "hv")
 save_plot(path(output_dir,
                "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/heatmap_clusters/compiled_cluster_grid.pdf"),
           p_grid,
-          base_aspect_ratio=1)
+          base_aspect_ratio=0.85)
 
 
 #save df
@@ -1472,7 +1345,147 @@ write.csv(as.matrix(cpm_df_cluster), path(output_dir,
 ```
 
 
-#TE v protein correlation
+
+#mRNA v TE correlation plot
+preliminary plot (TE v. Total mRNA)
+```{r}
+#start by trimming DE binary significance dataframe to necessary comparisons
+mini_binary <- cbind(gene = rownames(log2FC.all.binary), 
+                       log2FC.all.binary %>% 
+                             select(starts_with("TE"), 
+                             contains("Total"))) %>%
+                rename_at(-1,~str_c(., "_sig"))
+
+#consider adding additional columns for different FDRs
+comparison_df = log2FC.all %>%
+                select(contains("Total"), starts_with("TE")) %>%
+                rownames_to_column("gene") %>%
+                merge(mini_binary, by = "gene") %>%
+                pivot_longer(-c(gene, contains("sig")), names_to = "metric", values_to = "LFC") %>%
+                separate(metric, into = c("metric", "Treatment"), sep = "_") %>%
+                #mutate(metric = str_c("LFC (", metric, ")")) %>%
+                pivot_longer(contains("_sig"), names_to = "metric2", values_to = "sig") %>%
+                separate(metric2, into= c("metric2", "Treatment2", "junk"), sep = "_") %>%
+                filter(Treatment == Treatment2 & grepl("TE", metric) == grepl("TE", metric2)) %>%
+                select(-c(Treatment2, metric2, junk)) %>%
+                #mutate(metric = gsub("LFC ", "", metric)) %>%
+                pivot_wider(names_from = "metric", values_from = c("LFC", "sig")) %>%
+                #categorize according to zhulyn et al definitions
+                mutate(category = ifelse(LFC_TE > 0.5 & (LFC_Total < 0.5 & LFC_Total > -0.5),
+                                         "TE UP (no \U0394 mRNA)",
+                                         ifelse(LFC_TE < -0.5 & (LFC_Total < 0.5 & LFC_Total > -0.5),
+                                         "TE DOWN (no \U0394 mRNA)",
+                                         ifelse(LFC_TE > 0.5 & LFC_Total > 0.5,
+                                         "mRNA UP and TE UP",
+                                         ifelse(LFC_TE < -0.5 & LFC_Total < -0.5,
+                                         "mRNA DOWN and TE DOWN",
+                                         ifelse(LFC_TE < -0.5  & LFC_Total > 0.5,
+                                         "mRNA UP and TE DOWN",
+                                         ifelse(LFC_TE > 0.5  & LFC_Total < -0.5,
+                                         "mRNA DOWN and TE UP",
+                                         ifelse((LFC_TE < 0.5 & LFC_TE > -0.5) & LFC_Total > 0.5,
+                                         "mRNA UP (no \U0394 TE)",
+                                         ifelse((LFC_TE < 0.5 & LFC_TE > -0.5) & LFC_Total < -0.5,
+                                         "mRNA DOWN (no \U0394 TE)", "no change")))))))),
+                       category = factor(category, levels = c("TE UP (no \U0394 mRNA)", "TE DOWN (no \U0394 mRNA)",
+                                                              "mRNA UP and TE UP", "mRNA DOWN and TE DOWN",
+                                                              "mRNA UP (no \U0394 TE)", "mRNA DOWN (no \U0394 TE)",
+                                                              "mRNA UP and TE DOWN", "mRNA DOWN and TE UP",
+                                                              "no change")))
+   
+
+p<-ggplot(comparison_df, aes(x = `LFC_Total`, y = `LFC_TE`, color = category)) +
+  geom_point(data = subset(comparison_df, category == "no change"), size =0.75) +
+  geom_point(data = subset(comparison_df, category != "no change" & !(sig_Total != 0 | sig_TE != 0)),
+             size =0.75, color = "#BFBEBE") +
+  geom_point(data = subset(comparison_df, category != "no change" & (sig_Total != 0 | sig_TE != 0)), 
+             size =0.75)  +
+  scale_color_manual(values = c("#AED29E","#176533", "#D278AE","#EDC9DE", 
+                                "#FAA41A","#A6DFF7","#C0ACD0", "#9E7FB8","#BFBEBE"), drop = F) +
+  #add dashed lines for cut-offs
+  geom_hline(yintercept = 0.5, color = "grey", linetype =2) +
+  geom_hline(yintercept = -0.5, color = "grey", linetype =2) +
+  geom_vline(xintercept = 0.5, color = "grey", linetype =2) +
+  geom_vline(xintercept = -0.5, color = "grey", linetype =2) +
+  facet_wrap(~Treatment, scales = "fixed") +
+  geom_text_repel(data = subset(comparison_df, LFC_TE > 0.5 & LFC_Total <0.5),
+                  aes(label = gene),
+                  color = "black",
+                  size = 2,
+                  max.overlaps = 25,
+                  min.segment.length = 0,
+                  #force_pull=10,
+                  box.padding=0.1,
+                  segment.size=0.2,
+                  #nudge_x = 0.25,
+                  #nudge_y = 0.25,
+                  seed=123) +
+  ylim(0.5,3) +
+  xlim(-0.5, 7) +
+  labs(y = expression("log"["2"] ~ "FC  TE"),
+       x = expression("log"["2"] ~ "FC  Total mRNA")) +
+  theme_classic() +
+  theme(strip.background = element_rect(color = "white"),
+        strip.text = element_text(face = "bold", size = 14),
+        legend.position = "none",
+        legend.text = element_text(size = 5),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.2,'inches'),
+        panel.background = element_rect(color = "black"),
+        plot.margin = unit(c(0.001,0.1,0.001,0.1), "inches"))
+
+
+save_plot(path(output_dir, 
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/20240116_TotalmRNA-v-TE-correlation_genes_labeled3.pdf"), 
+         p)
+```
+
+plot each pool v. input
+```{r}
+
+```
+
+
+
+
+save interesting / relevant gene sets
+```{r}
+LSG2h <- comparison_df %>% 
+         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG2h")
+
+LSG6h <- comparison_df %>% 
+         filter(category == "TE UP (no \U0394 mRNA)" & sig_TE==1 & Treatment == "LSG6h")
+
+overlap<-LSG2h %>%
+         filter(gene %in% LSG6h$gene)
+
+LSG6h_only<-LSG6h %>%
+            filter(!(gene %in% LSG2h$gene))
+
+write.csv(as.matrix(LSG6h_only),
+          path(output_dir,
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG6h_UNIQUE.csv"))
+write.csv(as.matrix(LSG6h),
+          path(output_dir, 
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG6h.csv"))
+write.csv(as.matrix(overlap),
+          path(output_dir, 
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_overlap.csv"))
+
+#get group of genes that are interesting for follow-up
+int_genes <- subset(comparison_df, abs(`LFC_Total`) < 0.5 & abs(`LFC_TE`) > 0.5)
+int_genes_up <- subset(comparison_df, abs(`LFC_Total`) < 0.5 & `LFC_TE` > 0.5)
+int_genes_sig <- int_genes_up %>%
+                 left_join(mini_binary, by = "gene") %>%
+                 filter(!(TE_LSG2h == 0 & TE_LSG6h == 0)) %>%
+                 rename_at(c(5:6), ~str_c(., "_sig")) %>%
+                 mutate_at(c(5:6), ~as.logical(.)) %>%
+                 arrange(gene)
+
+#write.csv(as.matrix(int_genes_sig), path(output_dir, #"TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1.csv"))
+```
+
+#TE v mRNA and TE v protein correlation
 ```{r}
 #read in protein data
 lfc_table_all = read.csv(fs::path(prot_input_dir, "Compiled_lfcTable_AllDatasets_092222.csv")) %>%
