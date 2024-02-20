@@ -35,6 +35,21 @@ library(circlize) #for colorRamp2 color scaling
 library(monochromeR) # for generating palettes
 library(ggpubr) #arranging plots, stat_cor()
 library(emojifont) #for help rendering unicode text
+
+
+#GSEA
+#BiocManager::install("clusterProfiler", version = "3.16")
+#BiocManager::install("pathview")
+#BiocManager::install("enrichplot")
+
+library(clusterProfiler)
+library(enrichplot)
+
+# SET THE DESIRED ORGANISM HERE
+organism = "org.Mm.eg.db"
+#BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
+
 ```
 theme
 ```{r}
@@ -66,11 +81,11 @@ wd = getwd()
 # For accessing shared data on server
 shared_dir = "/Volumes/nchevrier/katej/projects/polysome-seq/2023_10_23_LSG_polyseq/bcbio"
 # For reading in counts/metadata
-input_dir = path(wd, "../input/data/2_formatted_data")
+input_dir = fs::path(wd, "../input/data/2_formatted_data")
 # For saving plots  
-output_dir = path(wd, "../output/2023_10_30-LSG")
+output_dir = fs::path(wd, "../output/2023_10_30-LSG")
 # For reading in protein data from interaction scoring project folder
-prot_input_dir = path(wd, "../../Interaction_Scoring/output/09_21_2022/Compiled_data")
+prot_input_dir = fs::path(wd, "../../Interaction_Scoring/output/09_21_2022/Compiled_data")
 ```
 
 sources
@@ -439,7 +454,7 @@ DE_LFC_thresh = DE_log2FC.all %>%
           filter_all(any_vars(abs(.) > LFC_thresh))
 
 #write csvs of DEGs and all log2FC
-write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
+#write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
 
 ```
 
@@ -451,23 +466,23 @@ We will use this to help assess different methods of calculating TE
 ```{r}
 
 #bind rownames as its own column ('gene') to make sure gene names dont get lost during manipulation
-percent_transcript = cbind(gene = rownames(DE_log2FC.all), cpm[rownames(DE_log2FC.all),]) %>%
-                     #make df for easier manipulation
-                     data.frame() %>%
-                     #pivot longer so we can average over replicates
-                     pivot_longer(cols = -gene, names_to ="Name", values_to = "cpm") %>%
-                     #split "Name" column into relevant info
-                     separate(Name, into = c("Treatment", "Rep", "Pool"), sep="_") %>%
+#percent_transcript = cbind(gene = rownames(DE_log2FC.all), cpm[rownames(DE_log2FC.all),]) %>%
+ #                    #make df for easier manipulation
+  #                   data.frame() %>%
+   #                  #pivot longer so we can average over replicates
+    #                 pivot_longer(cols = -gene, names_to ="Name", values_to = "cpm") %>%
+     #                #split "Name" column into relevant info
+      #               separate(Name, into = c("Treatment", "Rep", "Pool"), sep="_") %>%
                      #pivot wider to get reps in separate cols
-                     pivot_wider(names_from = "Rep", values_from = "cpm") %>%
+       #              pivot_wider(names_from = "Rep", values_from = "cpm") %>%
                      #make cpm numeric (preserving NA values)
-                     mutate_at(.vars = vars(Rep1:Rep3), ~ifelse(!(is.na(.)), as.numeric(.), .)) %>%
+        #             mutate_at(.vars = vars(Rep1:Rep3), ~ifelse(!(is.na(.)), as.numeric(.), .)) %>%
                      #calculate average
                         #struggling to get rowwise operations working correctly
                         #so sticking to a more manual calc for now
-                     mutate(Avg_cpm = (Rep1 + Rep2 + Rep3) / 3) %>%
+         #            mutate(Avg_cpm = (Rep1 + Rep2 + Rep3) / 3) %>%
                      #drop raw info after spot checking averages
-                     select(-contains("Rep"))
+          #           select(-contains("Rep"))
                     
 #store inputs separately
 inputs = percent_transcript %>%
@@ -974,9 +989,9 @@ cluster_df_edit = cluster_df %>%
 
 rownames(cluster_df_edit) = cluster_df_edit$gene
 
-write.csv(as.matrix(cluster_df_edit), 
-          path(output_dir,
-                 "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/20240108_2h6h_compiled_lfc_heatmap_fdr0.1_lfc0.5_8-clusters.csv"))
+#write.csv(as.matrix(cluster_df_edit), 
+         # path(output_dir,
+     #            "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/20240108_2h6h_compiled_lfc_heatmap_fdr0.1_lfc0.5_8-clust#ers.csv"))
 
 #re-order H_LFC and re-draw heatmap (please make a function for this soon kate!!!!)----
 H_LFC_reorder = H_LFC[cluster_df_edit$gene,]
@@ -993,7 +1008,7 @@ topAnnot_LFC = data.frame(Name = colnames(H_LFC_reorder)) %>%
 
 left_annot = cluster_df_edit %>% select(Cluster)
   
-p<-Heatmap(H_LFC_reorder,
+Heatmap(H_LFC_reorder,
         column_title = "LFC",
         column_title_gp = gpar(fontsize=12),
         row_title_gp = gpar(fontsize=7),
@@ -1289,52 +1304,63 @@ cpm_df_cluster = cpm_all %>%
 #plot
 p_list <- list() #initialize empty list
 for(i in c(1:7)){
- p_list[[i]]  <- ggplot(cpm_df_cluster %>% 
+p_list[[i]]<-ggplot(cpm_df_cluster %>% 
        filter(gene %in% (interesting_genes %>% 
                                 filter(Cluster == i) %>%
                                 select(gene) %>%
                                 unlist())),
-       aes(x = Pool, y = Avg_cpm, fill = Treatment)) +
+       aes(x = Treatment, y = Avg_cpm, fill = str_c(Treatment, "_", as.character(Pool)), 
+           alpha = as.character(Pool))) +
        geom_bar(position = "dodge", width =0.75, stat = "identity", color = "black") +
        #geom_point() +
        geom_errorbar(position = position_dodge(width=0.75), 
-                     aes(x = Pool, ymin=Avg_cpm - se, ymax= Avg_cpm + se),
-                     width=0.5, size=0.5) +
-       scale_fill_manual(values = c(Control = "grey",
-                                     LSG2h = "#FAC5B0",
-                                     LSG6h = "#F68064")) +
-       facet_wrap(~gene, scales="free_y", nrow=1) +
+                     aes(x = Treatment, ymin=Avg_cpm - se, ymax= Avg_cpm + se),
+                     width=0.5, size=0.5, color = "black", alpha = 1) +
+       scale_fill_manual(values = c("grey", "grey","grey","grey",
+                                   "orange","#FAC5B0","#FAC5B0","#FAC5B0",
+                                   "#C46650", "#F68064", "#F68064","#F68064")) +
+       scale_alpha_manual(values= c(0.1, 0.3, 0.7, 1)) +
+       facet_wrap(~gene, scales="free", nrow =1) +
        #scale_y_continuous(labels = function(x) format(x, scientific = TRUE)) +
        labs(y = str_c("Cluster ", as.character(i))) +
        #labs(x = ifelse(i==7, "Polysome Pool", element_blank())) +
-       theme(text = element_text(size=rel(3)),
+       theme(text = element_text(size=rel(5)),
              legend.position = "none",
-             strip.text.x = element_text(size=rel(1.7)),
+             strip.text.x = element_text(size=rel(2)),
              axis.text.x = element_blank(),
              axis.text.y = element_text(size =rel(1.5)),
              axis.title.x = element_blank(),
              axis.title.y = element_text(size=rel(1.75), face = "bold"),
              plot.margin = unit(c(0.001, 0.00001, 0.001, 0.00001), "inches"))
 
-save_plot(path(output_dir,
-               str_c("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/Cluster_",
-                     as.character(i), "_short_legend.pdf")),
-          p_list[[i]])
+#save_plot(path(output_dir,
+         #      str_c("TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/heatmap_clusters/Cluster_",
+         #            as.character(i), "_grouped-by-treat.pdf")),
+         # p_list[[i]])
 }
 
 
 #add x axis text to bottom plot
 p_list[[7]] = p_list[[7]] +
-         theme(axis.text.x = element_text(size = rel(1.75)))
+         theme(axis.text.x = element_text(size = rel(1.65)))
 
-p_grid <- ggarrange(plotlist = p_list, ncol=1, align = "hv") 
+p_list_up = p_list[1:4]
+p_list_down = p_list[5:7]
+p_list_up[[4]] = p_list[[4]] +
+         theme(axis.text.x = element_text(size = rel(1.65)))
+
+p_grid <- ggarrange(plotlist = p_list_down, ncol=1, align = "hv") 
 #p_grid <- annotate_figure(p_grid, 
                          # top = "Average cpm",
-                          #bottom = "Polysome Pool")
+                         #bottom = "Polysome Pool")
+
+p_grid 
+
+
 save_plot(path(output_dir,
-               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/heatmap_clusters/compiled_cluster_grid.pdf"),
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/single_gene_plots/heatmap_clusters/compiled_cluster_grid_grouped-by-treat-DOWN.pdf"),
           p_grid,
-          base_aspect_ratio=0.85)
+          base_aspect_ratio=1.5)
 
 
 #save df
@@ -1344,6 +1370,160 @@ write.csv(as.matrix(cpm_df_cluster), path(output_dir,
 
 ```
 
+#single gene plots of non-translational machinery TE up
+```{r}
+cluster2.3_genes <-read_csv(fs::path(output_dir,
+    "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/cluster_lists/20240115_final_7_clusters.csv")) %>%
+      dplyr::select(gene, Cluster) %>%
+      filter(Cluster %in% c(2,3)) %>%
+      filter(!grepl("Rpl", gene)) %>%
+      filter(!grepl("Rps", gene)) %>%
+      filter(!grepl("Eif", gene)) %>%
+      filter(!grepl("Eef", gene)) %>%
+      filter(!grepl("\\.", gene)) %>%
+      arrange(desc(gene)) #required for clusterProfiler gseGO fucntion
+
+gene_list = DE_LFC_thresh %>%
+            dplyr::select(starts_with("TE")) %>%
+            rownames_to_column(var = "gene") %>%
+            filter(gene %in% cluster2.3_genes$gene) #%>%
+            column_to_rownames(var = "gene")
+
+#gene_list = sort(gene_list, decreasing =T)
+
+#from cluster Profilier
+gse <- gseGO(geneList=gene_list$gene, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = organism, 
+             pAdjustMethod = "none")
+
+dotplot(gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+
+groupGO <-groupGO(gene = gene_list$gene,
+        OrgDb = org.Mm.eg.db,
+        ont = "BP",
+        keyType = 'SYMBOL')
+
+groupGO.df = summary(groupGO) %>%
+             arrange(Count) %>%
+             filter(Count !=0 ) %>%
+             filter(!grepl("interspecies", Description)) 
+
+groupGO.df = groupGO.df %>%
+             mutate(Description= factor(Description,
+                          levels = unique(groupGO.df$Description)))
+
+heatmapGO = groupGO.df #%>%
+            
+
+
+p<-heatplot(groupGO, showCategory = 20) +
+    theme(text = element_text(size = rel(3)))
+save_plot(fs::path(output_dir, "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/clusterProfiler/groupGO_BP_heatmap.pdf"),p)
+
+#trying my own heatmap
+#need a more automated way to do this...
+df.1 <- groupGO.df %>% 
+      dplyr::select(Description, geneID) %>%
+      mutate(Alpk2 = ifelse(grepl("Alpk2", geneID), 1, 0),
+             Btf3 = ifelse(grepl("Btf3", geneID), 1, 0),
+             Cand2 = ifelse(grepl("Cand2", geneID), 1, 0),
+             Cct4 = ifelse(grepl("Cct4", geneID), 1, 0),
+             Cct5 = ifelse(grepl("Cct5", geneID), 1, 0),
+             Chp1 = ifelse(grepl("Chp1", geneID), 1, 0),
+             Crbn = ifelse(grepl("Crbn", geneID), 1, 0),
+             Fau = ifelse(grepl("Fau", geneID), 1, 0),
+             Gm2000 = ifelse(grepl("Gm2000", geneID), 1, 0),
+             Gm3550 = ifelse(grepl("Gm3550", geneID), 1, 0),
+             Hspa8 = ifelse(grepl("Hspa8", geneID), 1, 0),
+             
+             Igbp1 = ifelse(grepl("Igbp1", geneID), 1, 0),
+             Inpp5e = ifelse(grepl("Inpp5e", geneID), 1, 0),
+             Kxd1 = ifelse(grepl("Kxd1", geneID), 1, 0),
+             Lamc1 = ifelse(grepl("Lamc1", geneID), 1, 0),
+             Mapk6 = ifelse(grepl("Mapk6", geneID), 1, 0),
+             Med21 = ifelse(grepl("Med21", geneID), 1, 0),
+             Memo1 = ifelse(grepl("Memo1", geneID), 1, 0),
+             Naca = ifelse(grepl("Naca", geneID), 1, 0),
+             Nfkbid = ifelse(grepl("Nfkbid", geneID), 1, 0),
+             Pabpc1 = ifelse(grepl("Pabpc1", geneID), 1, 0),
+             Pfdn5 = ifelse(grepl("Pfdn5", geneID), 1, 0),
+             
+             Polr1c = ifelse(grepl("Polr1c", geneID), 1, 0),
+             Prex2 = ifelse(grepl("Prex2", geneID), 1, 0),
+             Psmd13 = ifelse(grepl("Psmd13", geneID), 1, 0),
+             Psmd4 = ifelse(grepl("Psmd4", geneID), 1, 0),
+             Rack1 = ifelse(grepl("Rack1", geneID), 1, 0),
+             Ralgapa1 = ifelse(grepl("Ralgapa1", geneID), 1, 0),
+             Rbmx = ifelse(grepl("Rbmx", geneID), 1, 0),
+             Serpinb6b = ifelse(grepl("Serpinb6b", geneID), 1, 0),
+             Snrpb2 = ifelse(grepl("Snrpb2", geneID), 1, 0),
+             Srsf2 = ifelse(grepl("Srsf2", geneID), 1, 0),
+             Tctn1 = ifelse(grepl("Tctn1", geneID), 1, 0),
+             
+             Tlcd1 = ifelse(grepl("Tlcd1", geneID), 1, 0),
+             Tpt1 = ifelse(grepl("Tpt1", geneID), 1, 0),
+             Uba52 = ifelse(grepl("Uba52", geneID), 1, 0),
+             Uqcrfs1 = ifelse(grepl("Uqcrfs1", geneID), 1, 0),
+             Srsf2 = ifelse(grepl("Srsf2", geneID), 1, 0),
+             Wdr38 = ifelse(grepl("Wdr38", geneID), 1, 0),
+             
+             Ybx1 = ifelse(grepl("Ybx1", geneID), 1, 0),
+             Zfp263 = ifelse(grepl("Zfp263", geneID), 1, 0),
+             Zfp931 = ifelse(grepl("Zfp931", geneID), 1, 0),
+             Zrsr1 = ifelse(grepl("Zrsr1", geneID), 1, 0)
+             ) 
+
+sums = data.frame(gene = colnames(df.1 %>% dplyr::select(Alpk2:Zrsr1)),
+                  sum = colSums(df.1 %>% dplyr::select(Alpk2:Zrsr1)))
+   
+df.2 = df.1 %>%
+    pivot_longer(cols = -c(Description, geneID),
+                 names_to = "gene", values_to = "is-part") %>%
+    left_join(gene_list, by = "gene") %>%
+    left_join(sums, by = "gene") %>%
+    arrange(desc(sum)) 
+
+df = df.2 %>%
+     mutate(gene = factor(gene, levels = unique(gene)))
+
+ggplot(df, aes(x = gene, y = Description, fill = `is-part`*TE_LSG2h)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme(axis.text.x = element_text(angle = 45, size = rel(3), hjust = 1),
+        legend.position = "bottom")
+
+save_plot(fs::path(output_dir, "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/clusterProfiler/groupGO_kates_heatmap.pdf"), p, base_aspect_ratio = 3)
+
+p<-ggplot(groupGO.df, aes(y = Description, x = Count)) +
+  geom_col() +
+  xlim(0,50) +
+  geom_text(mapping = aes(x = Count + 3, label = GeneRatio), size = 2) #+
+  #geom_text(mapping = aes(x = Count + 8, label = geneID), color = "red",
+         #   size = 2)
+save_plot(fs::path(output_dir,"TE_analysis/2024_01_TE/cluster2-3_groupGO_barchart.pdf"),p)
+
+GO <-enrichGO(  gene = gene_list$gene,
+                OrgDb         = org.Mm.eg.db,
+                keyType       = 'SYMBOL',
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+
+
+GO.df <- as.data.frame(GO)
+write.csv(as.matrix(GO.df), fs::path(output_dir, "TE_analysis/2024_01_TE/cluster2-3_enrichGO_BP.csv"))
+p<-dotplot(GO) +theme(axis.text.y = element_text(size = 6))
+save_plot(fs::path(output_dir, "TE_analysis/2024_01_TE/cluster2-3_enrichGO_BP.pdf"),p)
+p
+```
 
 
 #mRNA v TE correlation plot
@@ -1439,17 +1619,10 @@ p<-ggplot(comparison_data_pivot, aes(x = `LFC_Total`, y = `LFC_Pool`, color = ca
         plot.margin = unit(c(0.001,0.1,0.001,0.1), "inches"))
 
 
-save_plot(path(output_dir, 
-               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/20240116_TotalmRNA-v-Pool.pdf"), 
-         p)
+#save_plot(path(output_dir, 
+            #   "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/20240116_TotalmRNA-v-Pool.pdf"), 
+        # p)
 ```
-
-plot each pool v. input
-```{r}
-
-```
-
-
 
 
 save interesting / relevant gene sets
@@ -1463,15 +1636,15 @@ LSG6h <- comparison_df %>%
 overlap<-LSG2h %>%
          filter(gene %in% LSG6h$gene)
 
-LSG6h_only<-LSG6h %>%
-            filter(!(gene %in% LSG2h$gene))
+LSG2h_only<-LSG2h %>%
+            filter(!(gene %in% LSG6h$gene))
 
-write.csv(as.matrix(LSG6h_only),
+write.csv(as.matrix(LSG2h_only),
           path(output_dir,
-               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG6h_UNIQUE.csv"))
-write.csv(as.matrix(LSG6h),
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG2h_UNIQUE.csv"))
+write.csv(as.matrix(LSG2h),
           path(output_dir, 
-               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG6h.csv"))
+               "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_LSG2h.csv"))
 write.csv(as.matrix(overlap),
           path(output_dir, 
                "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1_overlap.csv"))
@@ -1489,7 +1662,7 @@ int_genes_sig <- int_genes_up %>%
 #write.csv(as.matrix(int_genes_sig), path(output_dir, #"TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/mRNA/TE_up_mRNA_noChange_genes_LFC0.5_sigFDR0.1.csv"))
 ```
 
-#TE v mRNA and TE v protein correlation
+#TE v protein correlation
 ```{r}
 #read in protein data
 lfc_table_all = read.csv(fs::path(prot_input_dir, "Compiled_lfcTable_AllDatasets_092222.csv")) %>%
@@ -1549,49 +1722,40 @@ prot_TE_mRNA_merge = prot_lfc %>%
                                            levels = c("antagonism", "additive", "no change", "synergy"))) %>%
                        rename("Interaction Category" = category_2)
 
- 
-#figureout all timewise comparisons
-p<-ggplot(prot_TE_merge, aes(x = Protein_LFC, y = TE_LFC, color = TE_category))+
-  geom_point(alpha = 0.6, size = 0.2) +
-  geom_point(data = subset(prot_TE_merge, 
-                           TE_category == "TE UP (no \U0394 mRNA)" | TE_category == "TE DOWN (no \U0394 mRNA)"),
-             alpha = 0.6, size = 0.2) +
-  geom_point(data = subset(prot_TE_merge, 
-                           TE_category == "mRNA UP (no \U0394 TE)" | TE_category == "mRNA DOWN (no \U0394 TE)"),
-             alpha = 0.6, size = 0.2) +
-  #geom_smooth(method = 'lm', se=F,  color= "black",
-    #          formula = y~x,size =0.25,
-    #          linetype=1) +
-  facet_grid(TE_time~Protein_time) +
-  scale_color_manual(values = c("#AED29E","#176533", "#D278AE","#EDC9DE", 
-                                "#FAA41A","#A6DFF7","#C0ACD0", "#9E7FB8","#BFBEBE")) +
-  #geom_text_repel(data = subset(prot_TE_merge, gene == "Cxcl10"),aes(label = gene)) +
-  stat_cor(aes(label = ..rr.label..),label.x=-8, size=2, show.legend=F) +
-  labs(x = "Protein (LFC)", y = "TE (LFC)") +
-  theme(#strip.text = element_text(size = rel(0.5)), 
-        strip.text.x = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
-        strip.text.y = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
-        strip.background = element_rect(size=0.35, color="black"),
-        text = element_text(size=rel(4)),
-        legend.position = "none")
 
-p2<-ggplot(prot_TE_merge, aes(x = Protein_LFC, y = TE_LFC, color = `Interaction Category`)) +
-  geom_point(alpha = 0.6, size = 0.2) +
-  geom_point(data = subset(prot_TE_merge, 
-                           `Interaction Category` == "additive"),
-             alpha = 0.6, size = 0.2) +
-  geom_point(data = subset(prot_TE_merge, 
-                           `Interaction Category` == "antagonism" | `Interaction Category` == "synergy"),
-             alpha = 0.6, size = 0.2) +
-  #geom_smooth(method = 'lm', se=F,  color= "black",
-    #          formula = y~x,size =0.25,
-    #          linetype=1) +
+prot_TE_only_df = prot_TE_mRNA_merge %>% 
+                  data.frame() %>%
+                  dplyr::select(gene, Protein_time, Protein_LFC, Protein_category, LFC_H, TE_time) %>%
+                  unique() %>%
+                  mutate(Protein_category = gsub(".sig", "", Protein_category))
+  
+
+
+p<-ggplot(prot_TE_only_df, aes(x = Protein_LFC,
+                                y = LFC_H, 
+                                color = ifelse(`Protein_category` == "additive", "F", "T"))) +
+  geom_point(alpha = 1, size = 0.1) +
+  geom_point(data = subset(prot_TE_only_df, Protein_category != "additive"),
+             alpha = 1, size = 0.1) +
   facet_grid(TE_time~Protein_time) +
-  scale_color_manual(values = c(antagonism ="blue", additive = "grey30", "no change" = "grey86", synergy ="red")) +
-  geom_text_repel(data = subset(prot_TE_merge, (`Interaction Category` != "no change" & Protein_time != "Protein_4h" ) |
-                                  ((`Interaction Category` == "antagonism" | `Interaction Category` == "synergy" ) &
-                                     Protein_time == "Protein_4h" & abs(Protein_LFC) > 1)),
+  scale_color_manual(values = c("T" ="black", "F" = "grey75")) +
+  geom_text_repel(data = subset(prot_TE_only_df,
+                                `Protein_category` == "synergy"),
                   aes(label = gene),
+                  color = "red",
+                  size = 1,
+                  max.overlaps = 10,
+                  min.segment.length = 4,
+                  force_pull=5,
+                  box.padding=0,
+                  segment.size=0.2,
+                  nudge_x = 0.25,
+                  nudge_y = 0.25,
+                  seed=123) +
+  geom_text_repel(data = subset(prot_TE_only_df,
+                                `Protein_category` == "antagonism"),
+                  aes(label = gene),
+                  color = "blue",
                   size = 1,
                   max.overlaps = 10,
                   min.segment.length = 4,
@@ -1602,7 +1766,7 @@ p2<-ggplot(prot_TE_merge, aes(x = Protein_LFC, y = TE_LFC, color = `Interaction 
                   nudge_y = 0.25,
                   seed=123) +
   stat_cor(aes(label = ..rr.label..),label.x=-8, size=2, show.legend=F) +
-  labs(x = "Protein (LFC)", y = "TE (LFC)") +
+  labs(x = "Protein (LFC)", y = "Heavy Polysomes (LFC)") +
   theme(#strip.text = element_text(size = rel(0.5)), 
         strip.text.x = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
         strip.text.y = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
@@ -1611,58 +1775,6 @@ p2<-ggplot(prot_TE_merge, aes(x = Protein_LFC, y = TE_LFC, color = `Interaction 
         legend.position = "none",
         legend.background = element_rect(color = "white"))
 
-#now look at overlap with non-additive proteins and TE UP/DOWN genes
-filt_df = prot_TE_merge %>% filter(TE_category == "TE UP (no \U0394 mRNA)" | TE_category == "TE DOWN (no \U0394 mRNA)")
-filt_df2 = prot_TE_merge %>% filter(TE_category == "mRNA UP and TE UP")
-
-p4<-ggplot(filt_df2, aes(x = Protein_LFC, y = TE_LFC, color = `Interaction Category`)) +
-  #geom_point(data = prot_TE_merge, alpha = 0.6, size = 0.2, color = "grey85") +
-  geom_point(data = filt_df2, alpha = 0.6, size = 0.2, aes(color = TE_category)) +
-  geom_point(data = subset(filt_df2, 
-                           `Interaction Category` == "additive"),
-             alpha = 0.6, size = 0.2) +
-  geom_point(data = subset(filt_df2, 
-                           `Interaction Category` == "antagonism" | `Interaction Category` == "synergy"),
-             alpha = 1, size = 0.3) +
- # geom_smooth(method = 'lm', se=F,  color= "#D278AE",
-    #          formula = y~x,size =0.25,
-    #          linetype=1) +
-  facet_grid(TE_time~Protein_time) +
-  scale_color_manual(values = c(antagonism ="blue", additive = "grey30", 
-                                "no change" = "grey86", synergy ="red",
-                                "TE UP (no \U0394 mRNA)" = "#AED29E",
-                                "TE DOWN (no \U0394 mRNA)" = "#176533",
-                                "mRNA UP and TE UP" = "#D278AE")) +
-  geom_text_repel(data = subset(filt_df2, (`Interaction Category` != "no change")),
-                  aes(label = gene),
-                  size = 1.3,
-                  max.overlaps = 30,
-                  min.segment.length = 4,
-                  force_pull=5,
-                  box.padding=0,
-                  segment.size=0.2,
-                  nudge_x = 0.25,
-                  nudge_y = 0.25,
-                  seed=123) +
-  stat_cor(aes(label = ..rr.label..),label.x=-4, size=2.5, color = "#D278AE", show.legend=F) +
-  labs(x = "Protein (LFC)", y = "TE (LFC)") +
-  theme(#strip.text = element_text(size = rel(0.5)), 
-        strip.text.x = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
-        strip.text.y = element_text(margin = margin(0.05,0.05,0.05,0.05, "cm"), face = "bold"),
-        strip.background = element_rect(size=0.35, color="black"),
-        text = element_text(size=rel(4)),
-        legend.position = "none",
-        legend.background = element_rect(color = "white"))
-
-
-#save plot
-save_plot(path(output_dir,
-               "TE_analysis/FDR0.01/FDR0.01_LFC1/Protein_TE_correlation/Protein_v_TE_overlapping-genes-bulk_TEup_mRNAup-only.pdf"),
-          p4, dpi=90)
-#repeat with mRNA correlation of triplet vs protein
-
-#and mRNA vs TE using adil's data
-
-#start with matrix of all possible time-wise comparisons
+save_plot(fs::path(output_dir, "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/correlation_plots/Protein/Protein_heavy_polysome_correlation_non-additive-genes.pdf"),p, dpi =90)
 ```
 
