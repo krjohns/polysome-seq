@@ -253,9 +253,9 @@ cpm_all = cpm(dge_norm)
 
 # reorder cols so its easier to open in morpheus
 # use metadata to help establish order
-metadata = metadata %>%
+metadata2 = metadata %>%
            arrange(treatment, pool, replicate)
-cpm = cpm[,metadata$Name]
+cpm = cpm[,metadata2$Name]
 
 #save cpm heatmaps for plotting in morpheus
 write.csv(as.matrix(cpm), 
@@ -296,12 +296,22 @@ save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_replicate.pdf"),p3,dpi=90)
 ```
 
 
-#DE / TE Analysis 
+#DE Analysis 
 ```{r}
 # FILTER COUNTS & METADATA TO DROP BAD REPLICATE----
 # all replicates seem to look fine so no need to drop
 # use same cpm thresholding as in normalization
+cpm_threshold = 10
+cpm_needed =2
 
+#check rows of metadata match cols of counts
+sum(colnames(counts) == metadata$Name)
+
+groups <- factor(str_c(metadata$treatment, '_', metadata$pool))
+dge = DGEList(counts = counts, group = groups)
+dge_norm = calcNormFactors(dge)
+isexpr = rowSums(cpm(dge_norm) > cpm_threshold) >= cpm_needed
+dge_norm_fltd = dge_norm[isexpr, ]
 
 # DESIGN MATRIX----
 # create factor with all conditions in experiment
@@ -310,9 +320,10 @@ f <- factor(groups, levels=unique(groups))
 # build a design matrix for modeling with limma voom and indicating condition for each sample
 design <- model.matrix(~0 + f)
 
+
 # renames column names in the design (remove extra "f" at beginning of each group name)
 colnames(design) <- sub("f", "", colnames(design))
-rownames(design) <- colnames(counts_filt_poly)
+rownames(design) <- colnames(counts)
 
 ##LIMMA VOOM 
 
@@ -325,20 +336,23 @@ y <- voom(dge_norm_fltd, design, plot=T)
 fit <- lmFit(y, design)
 
 ##CONTRAST MATRIX----
-# each contrast for DE will be one pool in treated - control (ie. LSG2h_input - Control_input)
+# each contrast for DE will be one pool in treated - control (ie. Treat_input - Control_input)
 # 1. get all treatments that arent control
 # 2. make an equivalent list with the same pools in control
 # 3. subtract 1 - 2
-all_cond = levels(groups)[!grepl("Control", (levels(groups)))]
-conts = gsub(".*_", "Control_", all_cond)
+all_cond = levels(groups)[!grepl("CTRL", (levels(groups)))]
+conts = gsub(".*_", "sgCTRL_", all_cond)
 contrasts_list = str_c(all_cond, " - ", conts)
+contrasts_list = c(contrasts_list, "TE" = str_c("(", 
+                     contrasts_list[1], ") - (",
+                     contrasts_list[2], ")"))
 
 contrast.matrix <- makeContrasts(contrasts = contrasts_list, levels = design)
 
 #do some renaming of scores to facilitate pivoting later on and make our lives easier...
 contrast.matrix = contrast.matrix %>%
                   as.data.frame %>% #convert to df for now for manipulation
-                  rename_with(., ~gsub(" - Control.*", "", .)) %>%
+                  rename_with(., ~gsub(" - sgCTRL.*", "", gsub("^\\(.*","TE",.))) %>%
                   as.matrix()
 
 fit.cont <- contrasts.fit(fit, contrast.matrix)
@@ -360,7 +374,7 @@ rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), se
 colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
 
 #turn log2FC.all.binary into matrix of -1,0,1
-FDR_thresh = 0.01
+FDR_thresh = 0.2
 log2FC.all.binary = adj_p %>%
               mutate_all(~ifelse(. < FDR_thresh, 1, 0))
 
@@ -370,14 +384,23 @@ names = rownames(log2FC.all.binary)
 log2FC.all.binary = log2FC.all.binary %>%
                data.frame()
 
-DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary != 0) > 0,] %>%
+DE_log2FC.all = log2FC.all[(log2FC.all.binary$TE != 0) + (log2FC.all.binary$sgMax_Polysome != 0) > 0,] %>%
           data.frame()
-rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary != 0) > 0]
+rownames(DE_log2FC.all) = rownames(log2FC.all)[(log2FC.all.binary$TE != 0) + (log2FC.all.binary$sgMax_Polysome != 0) > 0]
 
 #filter DE matrix based on LFC thresh
-LFC_thresh = 1
+LFC_thresh = 0
 DE_LFC_thresh = DE_log2FC.all %>%
-          filter_all(any_vars(abs(.) > LFC_thresh))
+          filter_at(vars(TE), all_vars(abs(.) > LFC_thresh)) %>%
+          dplyr::select(ends_with("Total"), ends_with("Polysome"), "TE") %>%
+          rownames_to_column("gene") %>%
+          mutate(fdr0.1 = gene %in% rownames(fdr0.1_table),.before = 1) 
+
+
+#fdr0.1_table = DE_LFC_thresh
 
 #write csvs of DEGs and all log2FC
-#write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
+write.csv(as.matrix(DE_LFC_thresh), fs::path(output_dir, "DE_analysis/FDR0.2/20240220_FDR0.2_LFC0_DE-genes-lfcTable_annotated.csv"))
+
+
+```
