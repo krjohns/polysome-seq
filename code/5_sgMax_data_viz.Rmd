@@ -1,0 +1,296 @@
+---
+title: "5_sgMax_data_viz"
+author: "Kate Johnson"
+date: "2024-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# setup
+libraries
+```{r}
+# all-purpose data analysis tools
+library(tidyverse)
+# ggplot extension
+library(cowplot)
+# repeling labels in ggplot
+library(ggrepel)
+#correlation plots
+library(corrplot)
+# easier string formatting
+library(glue)
+# filepath manipulation
+library(fs)
+
+# edgeR and limma for DE analysis
+library(edgeR)
+library(limma)
+
+# for reading/writing .gct files
+#library(cmapR)
+
+# for working with matrices (especially sparse ones)
+library(Matrix)
+
+#complex heatmap /plotting
+library(ComplexHeatmap)
+library(circlize) #for colorRamp2 color scaling
+library(monochromeR) # for generating palettes
+library(ggpubr) #arranging plots, stat_cor()
+library(emojifont) #for help rendering unicode text
+
+
+#GSEA
+#BiocManager::install("clusterProfiler", version = "3.16")
+#BiocManager::install("pathview")
+#BiocManager::install("enrichplot")
+
+library(clusterProfiler)
+library(enrichplot)
+
+# SET THE DESIRED ORGANISM HERE
+organism = "org.Mm.eg.db"
+#BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
+
+```
+theme
+```{r}
+# Plot settings ----
+#compress PDFs
+tools::compactPDF('mypdfs/',  gs_quality='screen')
+###PLOTTING THEME ###
+theme_update(text = element_text(size = rel(4)),
+             legend.title = element_text(size = rel(2.5)),
+             legend.key.size = unit(.5, 'inches'),
+             legend.text = element_text(size = rel(2)),
+             panel.background = element_rect(fill = "white", colour = "black"),
+             axis.line = element_blank(),
+             axis.text.x = element_text(size=rel(3)),
+             axis.text.y = element_text(size=rel(3)),
+             axis.title.y = element_text(margin=margin(t = 0, r = 0.3, b = 0, l = 0.5), size=rel(3)),
+             axis.title.x = element_text(size=rel(3)),
+             plot.title = element_text(size = rel(3), face= "bold", hjust=0.5),
+             plot.margin = unit(c(0.2, 0.2, 0.2, 0.2), "inches"),
+             strip.text.x = element_text(size = rel(4), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.text.y = element_text(size = rel(4), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.background = element_rect(linewidth=0.35, color="black")) #trbl
+```
+
+
+directories
+```{r}
+wd = getwd()
+# For accessing shared data on server
+shared_dir = "/Volumes/nchevrier/katej/projects/polysome-seq/2024_02_15_MAXko_polyseq/bcbio"
+# For reading in counts/metadata
+input_dir = fs::path(wd, "../input/data/2_formatted_data")
+# For saving plots  
+output_dir = fs::path(wd, "../output/2024_02_16_sgMax_LSG")
+# For reading in protein data from interaction scoring project folder
+#prot_input_dir = fs::path(wd, "../../Interaction_Scoring/output/09_21_2022/Compiled_data")
+```
+
+sources
+```{r}
+
+```
+
+#complex heatmap plot fxn
+move to plotting functions!
+```{r}
+do_plot = function(file_name, w, h, p) {
+  pdf(file=path(output_dir, file_name), width = w, height = h)
+      draw(p)
+      dev.off()
+}
+```
+
+# Read in Data
+```{r, warnings =F}
+#counts
+counts = read_csv(fs::path(input_dir, "20240220_LSG_MaxKO_polysome_counts.csv")) 
+#rename gene column
+colnames(counts)[1] = "gene"
+# format matrix to be ready for de analysis
+genes <- counts$gene
+counts$gene <- NULL
+rownames(counts) <- genes
+
+#meta        
+metadata = read_csv(fs::path(input_dir, "20240220_LSG_MaxKO_polysome_metadata.csv")) %>%
+           #drop unused first col
+           dplyr::select(-1)
+```
+# QC
+
+complexity
+- ratio of unique molecules to the number of reads
+- unique molecular identifiers (UMIs) allow us to collapse molecules that we read multiple times
+    - A higher complexity means more information for the amount of reads we have
+- calculate complexity by comparing the UMI counts (`counts`) to the uncollapsed read counts 
+- should be ~0.6, so a large deviation below that might be cause for concern
+- raw read counts are called "tagcounts-dupes" by bcbio
+
+```{r}
+## make a table of total counts per sample
+counts_summary = enframe(colSums(counts), name='Name', value='counts') %>%
+    left_join(metadata)
+
+# read in raw read counts
+counts_dir = fs::path(shared_dir, "final/2024-02-18_bcbio")
+
+# read matrix
+reads = readMM(fs::path(counts_dir, 'tagcounts-dupes.mtx'))
+
+# add rownames and colnames
+rownames(reads) = read_lines(fs::path(counts_dir, 'tagcounts-dupes.mtx.rownames'))
+colnames(reads) = read_lines(fs::path(counts_dir, 'tagcounts-dupes.mtx.colnames'))
+
+## calculate counts for reads and add to summary table
+# get read counts
+reads = enframe(colSums(reads), name = 'sample', value = 'read_counts') %>%
+        rename_all(~str_to_title(.))
+
+# join to counts
+counts_summary = left_join(counts_summary, reads)
+
+#plot
+p<-counts_summary %>%
+    mutate(complexity = counts / Read_counts) %>%
+    ggplot(aes(str_c(pool, "_", replicate),
+               complexity, fill=pool)) + 
+        geom_col() + 
+        facet_grid(. ~ treatment) + 
+        labs(x = "Polysome Fraction", title = "Sample Complexity (UMIs / Uncollapsed Read Counts)") +
+        #guides(fill = 'none') + 
+        theme(axis.text.x = element_text(angle = 45, hjust = .5, vjust = .5, size = rel(0.5)),
+              plot.title = element_text(hjust = 0.5))
+
+#save_plot
+save_plot(fs::path(output_dir, "QC_plots/2024_02_20_sample_complexity_replicate_barplot.pdf"),p)
+
+```
+
+counts per sample
+```{r}
+p<-ggplot(counts_summary, aes(str_c(pool, '_', replicate), 
+                   counts, fill=pool)) + 
+    geom_col() + 
+    facet_grid(treatment ~ .) + 
+    #scale_y_log10() +
+    #guides(fill = 'none') + 
+    xlab('Polysome Fraction') +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+save_plot(fs::path(output_dir, "QC_plots/20240220_counts_per_sample.pdf"), p, dpi = 90)
+```
+
+replicate correlation
+```{r}
+# commenting out for now bc not particularly informative
+#pairwise correlations between samples for each treatment
+#for(treatment in unique(metadata$treatment)){
+#    suppressWarnings(
+#        gplots::heatmap.2(cor(counts[, metadata$treatment == treatment]),
+#                          trace = 'none', Rowv=F, Colv=F, 
+#                         col=viridis::viridis(75),
+#                          margins = c(10, 10))
+#    )
+#}
+
+# table of all pairwise correlations < 0.9
+# get all pairwise correlations
+cormelt = as_tibble(reshape2::melt(cor(counts)))
+colnames(cormelt) = c('s1', 's2', 'cor')
+
+filt_cormelt = cormelt %>%
+    # extract pieces of name for sample 1
+    extract(s1, c('treatment', 'pool', 'replicate1'), '(.*)_(.*)_(.*)') %>%
+    # extract pieces of name for sample 2
+    extract(s2, c('treatment2', 'pool2', 'replicate2'), '(.*)_(.*)_(.*)') %>%
+    # only keep samples where treatment and pool match
+    # replicate1 < replicate2 removes duplicate comparisons
+    filter(treatment == treatment2, pool == pool2, replicate1 < replicate2) %>%
+    # comparison column makes for easier reading
+    mutate(comparison = str_c(replicate1, '-', replicate2)) %>%
+    # remove extraneous columns
+    dplyr::select(-treatment2, -pool2, -replicate1, -replicate2) #%>%
+    # all correlations are above 0.9 so keep everything for now
+    # filter(cor < .9)
+
+
+p<-ggplot(filt_cormelt,
+       aes(x = treatment, y = pool, fill = cor)) +
+       geom_tile() +
+       geom_text(aes(label = round(cor,3)), 
+                  hjust = 0.5, vjust = 0.5) +
+       facet_wrap(~comparison)
+  
+#save plot 
+save_plot(fs::path(output_dir, "QC_plots/20240220_replicate_correlation.pdf"),p, dpi = 90)
+```
+
+
+# Data Normalization
+```{r}
+#set cpm thresholds (keep low to start)
+cpm_threshold = 10
+cpm_needed = 2
+
+groups <- factor(str_c(metadata$treatment, '_', metadata$pool))
+dge = DGEList(counts = counts, group = groups)
+dge_norm = calcNormFactors(dge)
+isexpr = rowSums(cpm(dge_norm) > cpm_threshold) >= cpm_needed
+
+dge_norm_fltd = dge_norm[isexpr, ]
+
+cpm = cpm(dge_norm_fltd) #dropped to ~7,000 genes
+cpm_all = cpm(dge_norm)
+
+# reorder cols so its easier to open in morpheus
+# use metadata to help establish order
+metadata = metadata %>%
+           arrange(treatment, pool, replicate)
+cpm = cpm[,metadata$Name]
+
+#save cpm heatmaps for plotting in morpheus
+write.csv(as.matrix(cpm), 
+          fs::path(output_dir, "cpm_tables/20240220_sgMax_LSG_cpmTable_filt.csv"))
+write.csv(as.matrix(cpm_all), 
+          fs::path(output_dir, "cpm_tables/20240220_sgMAx_LSG_cpmTable_all.csv"))
+
+```
+
+PCA
+```{r}
+# run pca
+pca = prcomp(t(cpm), center=T, scale=T)
+# combine pca results with metadata for easy plotting
+pca_res = bind_cols(metadata, as_tibble(pca$x))
+
+# plot
+
+# color by treatment and pool
+p<-ggplot(pca_res, aes(PC1, PC2, color = treatment, shape = pool)) + 
+    geom_point(size=2) +
+    scale_color_manual(values = c("black","#F68064")) +
+    scale_shape_manual(values = c(21,16))
+
+# color by pool
+p2<-ggplot(pca_res, aes(PC1, PC2, color=pool)) + 
+    geom_point(size=2) +
+    scale_color_manual(values = c("white","#68C3A5"))
+
+# color by replicate
+p3<-ggplot(pca_res, aes(PC1, PC2, color=replicate)) + 
+    geom_point(size=2)
+
+# save plots
+save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_treatment_and_pool.pdf"),p,dpi=90)
+save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_pool.pdf"),p2,dpi=90)
+save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_replicate.pdf"),p3,dpi=90)
+```
