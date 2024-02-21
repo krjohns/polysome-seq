@@ -294,3 +294,90 @@ save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_treatment_and_pool.pdf"),p,d
 save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_pool.pdf"),p2,dpi=90)
 save_plot(fs::path(output_dir, "QC_plots/PCA/PCA_by_replicate.pdf"),p3,dpi=90)
 ```
+
+
+#DE / TE Analysis 
+```{r}
+# FILTER COUNTS & METADATA TO DROP BAD REPLICATE----
+# all replicates seem to look fine so no need to drop
+# use same cpm thresholding as in normalization
+
+
+# DESIGN MATRIX----
+# create factor with all conditions in experiment
+f <- factor(groups, levels=unique(groups))
+
+# build a design matrix for modeling with limma voom and indicating condition for each sample
+design <- model.matrix(~0 + f)
+
+# renames column names in the design (remove extra "f" at beginning of each group name)
+colnames(design) <- sub("f", "", colnames(design))
+rownames(design) <- colnames(counts_filt_poly)
+
+##LIMMA VOOM 
+
+# limma voom transforms count data to log2-counts per million (log2-cpm) with associated weights
+# estimate the mean-variance relationship and use this to compute appropriate observational-level weights.
+# The data are then ready for linear modeling.
+y <- voom(dge_norm_fltd, design, plot=T)
+
+# fit linear model for each gene given a series of arrays
+fit <- lmFit(y, design)
+
+##CONTRAST MATRIX----
+# each contrast for DE will be one pool in treated - control (ie. LSG2h_input - Control_input)
+# 1. get all treatments that arent control
+# 2. make an equivalent list with the same pools in control
+# 3. subtract 1 - 2
+all_cond = levels(groups)[!grepl("Control", (levels(groups)))]
+conts = gsub(".*_", "Control_", all_cond)
+contrasts_list = str_c(all_cond, " - ", conts)
+
+contrast.matrix <- makeContrasts(contrasts = contrasts_list, levels = design)
+
+#do some renaming of scores to facilitate pivoting later on and make our lives easier...
+contrast.matrix = contrast.matrix %>%
+                  as.data.frame %>% #convert to df for now for manipulation
+                  rename_with(., ~gsub(" - Control.*", "", .)) %>%
+                  as.matrix()
+
+fit.cont <- contrasts.fit(fit, contrast.matrix)
+
+e.fit <- eBayes(fit.cont)
+
+#first bind together all LFC lists for all genes from ea. contrast
+log2FC.all = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                             function(coef) topTable(e.fit, coef=coef, number=Inf, adjust = "BH",
+                                                     sort.by='none')$logFC)) %>%
+      data.frame()
+
+adj_p = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                                    function(coef) topTable(e.fit, coef=coef, adjust = "BH",
+                                                            number=Inf,
+                                                            sort.by='none')$adj.P.Val))
+
+rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), sep = ".")
+colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
+
+#turn log2FC.all.binary into matrix of -1,0,1
+FDR_thresh = 0.01
+log2FC.all.binary = adj_p %>%
+              mutate_all(~ifelse(. < FDR_thresh, 1, 0))
+
+#filter LFC matrix accordingly
+log2FC.all.binary[(log2FC.all < 0) == T] = -1 * log2FC.all.binary[(log2FC.all < 0) == T]
+names = rownames(log2FC.all.binary)
+log2FC.all.binary = log2FC.all.binary %>%
+               data.frame()
+
+DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary != 0) > 0,] %>%
+          data.frame()
+rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary != 0) > 0]
+
+#filter DE matrix based on LFC thresh
+LFC_thresh = 1
+DE_LFC_thresh = DE_log2FC.all %>%
+          filter_all(any_vars(abs(.) > LFC_thresh))
+
+#write csvs of DEGs and all log2FC
+#write.csv(as.matrix(DE_LFC_thresh), path(output_dir, "DE_analysis/filtered/FDR0.1_LFC1/20231101_filtered_FDR0.1_LFC1_DE-genes-lfcTable.csv"))
