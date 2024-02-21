@@ -374,9 +374,14 @@ rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), se
 colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
 
 #turn log2FC.all.binary into matrix of -1,0,1
-FDR_thresh = 0.2
+#use different thresholds for DE v. TE contasts
+#DE -- FDR < 0.01, TE -- FDR < 0.2
+FDR_thresh_DE = 0.01
+FDR_thresh_TE = 0.2
+
 log2FC.all.binary = adj_p %>%
-              mutate_all(~ifelse(. < FDR_thresh, 1, 0))
+                    mutate_at(vars(starts_with("sg")), ~ifelse(. < FDR_thresh_DE, 1, 0)) %>%
+                    mutate_at(vars(TE), ~ifelse(. < FDR_thresh_TE, 1, 0))
 
 #filter LFC matrix accordingly
 log2FC.all.binary[(log2FC.all < 0) == T] = -1 * log2FC.all.binary[(log2FC.all < 0) == T]
@@ -384,23 +389,32 @@ names = rownames(log2FC.all.binary)
 log2FC.all.binary = log2FC.all.binary %>%
                data.frame()
 
-DE_log2FC.all = log2FC.all[(log2FC.all.binary$TE != 0) + (log2FC.all.binary$sgMax_Polysome != 0) > 0,] %>%
+DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary != 0) > 0,] %>%
           data.frame()
-rownames(DE_log2FC.all) = rownames(log2FC.all)[(log2FC.all.binary$TE != 0) + (log2FC.all.binary$sgMax_Polysome != 0) > 0]
+rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary != 0) > 0]
 
-#filter DE matrix based on LFC thresh
-LFC_thresh = 0
+#filter DE matrix based on LFC thresh (abs(LFC) > 0 for TE or abs(LFC) > 0.5 for DE)
+LFC_thresh_DE = 1
+LFC_thresh_TE = 0
 DE_LFC_thresh = DE_log2FC.all %>%
-          filter_at(vars(TE), all_vars(abs(.) > LFC_thresh)) %>%
-          dplyr::select(ends_with("Total"), ends_with("Polysome"), "TE") %>%
-          rownames_to_column("gene") %>%
-          mutate(fdr0.1 = gene %in% rownames(fdr0.1_table),.before = 1) 
+                rownames_to_column("gene") %>%
+                filter(abs(sgMax_Total) > LFC_thresh_DE | 
+                       abs(sgMax_Polysome) > LFC_thresh_DE |
+                       gene %in% rownames(log2FC.all[log2FC.all.binary$TE != 0,])) %>%
+                column_to_rownames("gene") %>%
+                dplyr::select(sgMax_Total, sgMax_Polysome, TE)
 
-
-#fdr0.1_table = DE_LFC_thresh
 
 #write csvs of DEGs and all log2FC
-write.csv(as.matrix(DE_LFC_thresh), fs::path(output_dir, "DE_analysis/FDR0.2/20240220_FDR0.2_LFC0_DE-genes-lfcTable_annotated.csv"))
+#write.csv(as.matrix(DE_LFC_thresh), fs::path(output_dir, "DE_analysis/different_thresholds/TE-fdr0.1_DE-fdr0.1_LFC1/20240221_FDR0.01LFC1_DE_fdr0.2TE-genes-lfcTable.csv"))
+
+```
+
+#Complex Heatmap :)
+```{r}
+
+
 
 
 ```
+
