@@ -103,7 +103,7 @@ sources
 move to plotting functions!
 ```{r}
 do_plot = function(file_name, w, h, p) {
-  pdf(file=path(output_dir, file_name), width = w, height = h)
+  pdf(file=fs::path(output_dir, file_name), width = w, height = h)
       draw(p)
       dev.off()
 }
@@ -412,9 +412,132 @@ DE_LFC_thresh = DE_log2FC.all %>%
 
 #Complex Heatmap :)
 ```{r}
+#set heatmap params----
+#set seed for kmeans
+set.seed(123)
+
+#set fast clustering
+ht_opt$fast_hclust = TRUE
+ht_opt$message = FALSE
 
 
+H_LFC = DE_LFC_thresh %>%
+        as.matrix()
 
+topAnnot_LFC = data.frame(Sample = colnames(H_LFC),
+                          Treatment = c("LSG", "LSG", "LSG"))  %>%
+               mutate(Sample = factor(Sample, levels = c("sgMax_Total", "sgMax_Polysome", "TE")))
+  
+p<-Heatmap(H_LFC,
+        column_title = "LFC",
+        column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=7),
+        name = "log2(treated/control)",
+        show_row_names = F,
+        row_names_gp = gpar(fontsize = 2),
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
+                          col = list(Sample = c("sgMax_Total" = "white", 
+                                                "sgMax_Polysome" = "black",
+                                                "TE" = "#68C3A5"),
+                                     Treatment = c("LSG" = "#F68064")),
+                          border = T,
+                          show_legend = F,
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = topAnnot_LFC$Sample,
+        column_gap = unit(c(0,3), "mm"),
+        row_km = 20,
+        row_gap = unit(0, "mm"),
+        border = T,
+        #border_gp = gpar(col = "black", lwd = 2), 
+        col = colorRamp2(c(-2,-0.1, 0, 0.1, 2), c("blue","white","white", "white", "red"))
+        )
 
+#save clusters, re-order
+#get clusters----
+p_drawn <- draw(p) #draw to lock in row clustering
+p_drawn #run to show on screen and visually choose clusters
+
+#use LFC to determine order instead of transcript distribution
+rd <- row_order(p_drawn) #get row order & save
+#reorder to make sure order is 1:20 so we dont have issues when assigning clusters
+rd_ordered <- rd[order(as.numeric(names(rd)))] # make sure order is 1:20
+
+#get cluster gene lists
+cluster_list = list() #initialize empty list
+for(i in 1:20){
+  cluster_list[[i]] = data.frame(Cluster = i, 
+                                 gene = c(rownames(H_LFC)[rd_ordered[[i]]]))
+}
+cluster_df = do.call(bind_rows, cluster_list)
+
+#edit/condense clusters by eye
+cluster_df_edit = cluster_df %>%
+                  mutate(old_cluster = Cluster, 
+                         Cluster = ifelse(old_cluster %in% c(18:20), 1,
+                                    ifelse(old_cluster %in% c(12,14:17), 2,
+                                      ifelse(old_cluster %in% c(9:11), 3,
+                                       ifelse(old_cluster %in% c(6:8,13), 4,
+                                          ifelse(old_cluster %in% c(1:2), 5,
+                                                   ifelse(old_cluster %in% c(5), 6, 7))))))) %>%
+                  arrange(Cluster)
+
+rownames(cluster_df_edit) = cluster_df_edit$gene
+
+write.csv(as.matrix(cluster_df_edit), 
+          fs::path(output_dir,
+              "DE_analysis/different_thresholds/TE-fdr0.2_DE-fdr0.1_LFC1/complex_heatmap/LFC_heatmap_7_clusters_cluster_info.csv"))
+
+#re-order H_LFC and re-draw heatmap (please make a function for this soon kate!!!!)----
+H_LFC_reorder = H_LFC[cluster_df_edit$gene,]
+
+left_annot = cluster_df_edit %>% dplyr::select(Cluster)
+  
+p2<-Heatmap(H_LFC_reorder,
+        column_title = "LFC",
+        column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=7),
+        cluster_row_slices = T,
+        name = "log2(treated/control)",
+        show_row_names = F,
+        show_column_names=F,
+        cluster_rows = F,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
+                          col = list(Sample = c("sgMax_Total" = "white", 
+                                                "sgMax_Polysome" = "black",
+                                                "TE" = "#68C3A5"),
+                                     Treatment = c("LSG" = "#F68064")),
+                          border = T,
+                          show_legend = F,
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 8)),
+        left_annotation = rowAnnotation(Cluster = left_annot$Cluster,
+                                            col = list(Cluster = 
+                                                         c(`1` = "#ED6868",
+                                                           `2` = "#F4908E",
+                                                           `3` = "#EED290",
+                                                           `4` = "#5BABA4",
+                                                           `5` = "#A6DFF7",
+                                                           `6` = "#A5C7DE",
+                                                           `7` = "#C0ACD0",
+                                                           `8` = "#9E7FB8"))
+                                       ),
+        column_split = topAnnot_LFC$Sample,
+        column_gap = unit(c(0,3), "mm"),
+        #row_km = 20,
+        row_split = left_annot$Cluster,
+        row_gap = unit(c(0,0,0,0,3,0,0), "mm"),
+        border = T,
+        #border_gp = gpar(col = "black", lwd = 2), 
+        col = colorRamp2(c(-2,-0.1, 0, 0.1, 2), c("blue","white","white", "white", "red"))
+        )
+
+#save intermediate heatmap
+do_plot("DE_analysis/different_thresholds/TE-fdr0.2_DE-fdr0.1_LFC1/complex_heatmap/LFC_heatmap_7_clusters-1.pdf",
+        8,6,p2)
 ```
 
