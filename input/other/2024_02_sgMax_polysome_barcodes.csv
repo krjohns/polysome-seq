@@ -1,0 +1,13 @@
+﻿Barcode,Sample Number,Name
+AAACAT,1,sgCTRL_Total_g1
+AAATCA,2,sgCTRL_Total_g2
+AACATA,3,sgCTRL_Total_g3
+AAGTTA,4,sgMax_Total_g1
+AATATG,5,sgMax_Total_g2
+AATGTA,6,sgMax_Total_g3
+AATTTC,7,sgCTRL_Polysome_g1
+ACTAAA,8,sgCTRL_Polysome_g2
+AGAATT,9,sgCTRL_Polysome_g3
+AGTATA,10,sgMax_Polysome_g1
+ATAAGT,11,sgMax_Polysome_g2
+ATAGAT,12,sgMax_Polysome_g3

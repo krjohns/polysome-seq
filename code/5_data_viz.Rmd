@@ -1501,7 +1501,7 @@ ggplot(df, aes(x = gene, y = Description, fill = `is-part`*TE_LSG2h)) +
 
 save_plot(fs::path(output_dir, "TE_analysis/2024_01_TE/FDR0.1/LFC0.5/complex_heatmap/clusterProfiler/groupGO_kates_heatmap.pdf"), p, base_aspect_ratio = 3)
 
-p<-ggplot(groupGO.df, aes(y = Description, x = Count)) +
+ggplot(groupGO.df, aes(y = Description, x = Count)) +
   geom_col() +
   xlim(0,50) +
   geom_text(mapping = aes(x = Count + 3, label = GeneRatio), size = 2) #+

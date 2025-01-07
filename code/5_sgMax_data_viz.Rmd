@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # setup
 libraries
-```{r}
+```{r, warning = FALSE}
 # all-purpose data analysis tools
 library(tidyverse)
 # ggplot extension
@@ -258,10 +258,10 @@ metadata2 = metadata %>%
 cpm = cpm[,metadata2$Name]
 
 #save cpm heatmaps for plotting in morpheus
-write.csv(as.matrix(cpm), 
-          fs::path(output_dir, "cpm_tables/20240220_sgMax_LSG_cpmTable_filt.csv"))
-write.csv(as.matrix(cpm_all), 
-          fs::path(output_dir, "cpm_tables/20240220_sgMAx_LSG_cpmTable_all.csv"))
+#write.csv(as.matrix(cpm), 
+ #         fs::path(output_dir, "cpm_tables/20240220_sgMax_LSG_cpmTable_filt.csv"))
+#write.csv(as.matrix(cpm_all), 
+ #         fs::path(output_dir, "cpm_tables/20240220_sgMAx_LSG_cpmTable_all.csv"))
 
 ```
 
