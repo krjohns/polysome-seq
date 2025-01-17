@@ -1,0 +1,587 @@
+---
+title: "5_CtuKO_data_viz"
+author: "Kate Johnson"
+date: "2025-01-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# setup
+libraries
+```{r, warning = FALSE}
+# all-purpose data analysis tools
+library(tidyverse)
+# ggplot extension
+library(cowplot)
+# repeling labels in ggplot
+library(ggrepel)
+#correlation plots
+library(corrplot)
+# easier string formatting
+library(glue)
+# filepath manipulation
+library(fs)
+
+# edgeR and limma for DE analysis
+library(edgeR)
+library(limma)
+
+# for reading/writing .gct files
+#library(cmapR)
+
+# for working with matrices (especially sparse ones)
+library(Matrix)
+
+#complex heatmap /plotting
+library(ComplexHeatmap)
+library(circlize) #for colorRamp2 color scaling
+library(monochromeR) # for generating palettes
+library(ggpubr) #arranging plots, stat_cor()
+library(emojifont) #for help rendering unicode text
+
+
+#GSEA
+#BiocManager::install("clusterProfiler", version = "3.16")
+#BiocManager::install("pathview")
+#BiocManager::install("enrichplot")
+
+library(clusterProfiler)
+library(enrichplot)
+
+# SET THE DESIRED ORGANISM HERE
+organism = "org.Mm.eg.db"
+#BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
+
+```
+theme
+```{r}
+# Plot settings ----
+#compress PDFs
+tools::compactPDF('mypdfs/',  gs_quality='screen')
+###PLOTTING THEME ###
+theme_update(text = element_text(size = rel(4)),
+             legend.title = element_text(size = rel(2.5)),
+             legend.key.size = unit(.1, 'inches'),
+             legend.text = element_text(size = rel(2)),
+             panel.background = element_rect(fill = "white", colour = "black"),
+             axis.line = element_blank(),
+             axis.text.x = element_text(size=rel(3)),
+             axis.text.y = element_text(size=rel(3)),
+             axis.title.y = element_text(margin=margin(t = 0.5, r = 0.5, 
+                                                       b = 0.5, l = 0.5), size=rel(3)),
+             axis.title.x = element_text(size=rel(3)),
+             plot.title = element_text(size = rel(3), face= "bold", hjust=0.5),
+             plot.margin = unit(c(0.08, 0.1, 0.01, 0.01), "inches"),
+             strip.text.x = element_text(size = rel(3), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.text.y = element_text(size = rel(3), face = "bold", margin = margin(0.05,0.05,0.05,0.05, "cm")),
+             strip.background = element_rect(linewidth=0.35, color="black"),
+             legend.key = element_rect(colour = NA, fill = NA)) #trbl
+```
+
+
+directories
+```{r}
+wd = getwd()
+# For accessing shared data on server
+#shared_dir = "/Volumes/nchevrier/katej/projects/polysome-seq/2024_02_15_MAXko_polyseq/bcbio"
+# For reading in counts/metadata
+input_dir = fs::path(wd, "../input/data/2_formatted_data/star_solo")
+# For saving plots  
+output_dir = fs::path(wd, "../output/2025_01_07_CtuKO_polyseq")
+# For reading in protein data from interaction scoring project folder
+#prot_input_dir = fs::path(wd, "../../Interaction_Scoring/output/09_21_2022/Compiled_data")
+```
+
+sources
+```{r}
+
+```
+
+#complex heatmap plot fxn
+move to plotting functions!
+```{r}
+do_plot = function(file_name, w, h, p) {
+  pdf(file=fs::path(output_dir, file_name), width = w, height = h)
+      draw(p, heatmap_legend_side = "left", ht_gap = unit(0.5, "cm"))
+      dev.off()
+}
+```
+
+# Read in Data
+```{r, warnings =F}
+#counts
+counts = read_csv(fs::path(input_dir, "20250107_CtuKO_polyseq_counts.csv")) 
+#rename gene column
+colnames(counts)[1] = "gene"
+# format matrix to be ready for de analysis
+genes <- counts$gene
+counts$gene <- NULL
+rownames(counts) <- make.unique(genes)
+
+#meta        
+metadata = read_csv(fs::path(input_dir, "20250107_CtuKO_polyseq_metadata.csv")) %>%
+           #drop unused first col
+           dplyr::select(-1) %>%
+           mutate(Target_Guide = str_c(Target,"_", Guide),
+                  Read_sum = ifelse(colSums(counts) < 1e6, "<1e6", 
+                                     ifelse(colSums(counts) > 3e6, ">3e6", "1-3e6"))) %>%
+           filter(Replicate != "R2repeat") %>% #filter out repeat replicate
+           filter(Read_sum != "<1e6") #filter out low reads
+           #filter(!(`Pool - Sample_Num` %in% c("Polysome - 7", "Input - 2",
+                       #                        "Input - 11", "Polysome - 6")))  # filter out samples that cluster poorly
+counts_filt = counts[, metadata$Sample]
+rownames(counts_filt) <- make.unique(genes)
+
+```
+# QC
+
+replicate correlation
+```{r}
+# commenting out for now bc not particularly informative
+#pairwise correlations between samples for each treatment
+#for(treatment in unique(metadata$treatment)){
+#    suppressWarnings(
+#        gplots::heatmap.2(cor(counts[, metadata$treatment == treatment]),
+#                          trace = 'none', Rowv=F, Colv=F, 
+#                         col=viridis::viridis(75),
+#                          margins = c(10, 10))
+#    )
+#}
+
+# table of all pairwise correlations < 0.9
+# get all pairwise correlations
+#cormelt = as_tibble(reshape2::melt(cor(counts)))
+#colnames(cormelt) = c('s1', 's2', 'cor')
+
+#filt_cormelt = cormelt %>%
+    # extract pieces of name for sample 1
+ #   extract(s1, c('treatment', 'pool', 'replicate1'), '(.*)_(.*)_(.*)') %>%
+    # extract pieces of name for sample 2
+  #  extract(s2, c('treatment2', 'pool2', 'replicate2'), '(.*)_(.*)_(.*)') %>%
+    # only keep samples where treatment and pool match
+    # replicate1 < replicate2 removes duplicate comparisons
+   # filter(treatment == treatment2, pool == pool2, replicate1 < replicate2) %>%
+    # comparison column makes for easier reading
+    #mutate(comparison = str_c(replicate1, '-', replicate2)) %>%
+    # remove extraneous columns
+  #  dplyr::select(-treatment2, -pool2, -replicate1, -replicate2) #%>%
+    # all correlations are above 0.9 so keep everything for now
+    # filter(cor < .9)
+
+
+#p<-ggplot(filt_cormelt,
+ #      aes(x = treatment, y = pool, fill = cor)) +
+  #     geom_tile() +
+   #    geom_text(aes(label = round(cor,3)), 
+    #              hjust = 0.5, vjust = 0.5) +
+     #  facet_wrap(~comparison)
+#p  
+#save plot 
+#save_plot(fs::path(output_dir, "QC_plots/20240220_replicate_correlation.pdf"),p, dpi = 90)
+```
+
+
+# Data Normalization
+```{r}
+#set cpm thresholds (keep low to start)
+cpm_threshold = 10
+cpm_needed = 2
+
+groups <- factor(str_c(metadata$Target, '_', metadata$Guide, '_', metadata$Pool))
+dge = DGEList(counts = counts_filt, group = groups)
+dge_norm = calcNormFactors(dge)
+isexpr = rowSums(cpm(dge_norm) > cpm_threshold) >= cpm_needed
+
+dge_norm_fltd = dge_norm[isexpr, ]
+
+cpm = cpm(dge_norm_fltd) #dropped to ~8,300 genes
+cpm_all = cpm(dge_norm)
+
+# reorder cols so its easier to open in morpheus
+# use metadata to help establish order
+metadata2 = metadata %>%
+            arrange(Target, Guide, Pool, Replicate)
+cpm = cpm[,metadata2$Sample]
+
+#save cpm heatmaps for plotting in morpheus
+#write.csv(as.matrix(cpm), 
+#          fs::path(output_dir, "cpm_tables/low_reads_filtered/20250107_CtuKO-polyseq_cpmTable_filt_10in2.csv"))
+#write.csv(as.matrix(cpm_all), 
+  #        fs::path(output_dir, "cpm_tables/low_reads_filtered/20250107_CtuKO-polyseq_cpmTable_all.csv"))
+
+```
+
+PCA
+```{r}
+
+# run pca
+pca = prcomp(t(cpm), center=T, scale=T)
+# combine pca results with metadata for easy plotting
+pca_res = bind_cols(metadata, as_tibble(pca$x)) %>%
+          mutate(Target_Guide = factor(Target_Guide, levels =c("sgScr_g1", "sgScr_g2",
+                                                               "sgCtu1_g1", "sgCtu1_g2",
+                                                               "sgCtu2_g1", "sgCtu2_g2")))
+
+# plot
+
+# color by target and pool
+p<-ggplot(pca_res, aes(PC1, PC2, color = Target_Guide, shape = Pool)) + 
+    geom_point(size=2) +
+   # scale_color_manual(values = c("black","grey30",
+                #                  "#D278AE", "#A8608B",
+               #                  "#9E7FB8", "#5E4C6E")) +
+    scale_shape_manual(values = c(21,16)) +
+    theme(legend.position = "right")
+p
+# color by pool
+p2<-ggplot(pca_res, aes(PC1, PC2, color=pool)) + 
+    geom_point(size=2) +
+    scale_color_manual(values = c("white","#68C3A5"))
+
+# color by replicate
+p3<-ggplot(pca_res, aes(PC1, PC2, color=Replicate)) + 
+    geom_point(size=2)
+p3
+# save plots
+save_plot(fs::path(output_dir, "QC/PCA/PCA_lowreads_dropped.pdf"),p,
+          dpi=90, base_aspect_ratio = 1.5)
+#save_plot(fs::path(output_dir, "QC/PCA/PCA_by_pool.pdf"),p2,dpi=90)
+#save_plot(fs::path(output_dir, "QC/PCA/PCA_by_replicate.pdf"),p3,dpi=90,  base_aspect_ratio = 1.5)
+```
+
+#single gene plots - check Ctu1 and Ctu2 expression
+```{r}
+#format filtered cpms
+temp = cbind(gene = rownames(cpm_all), cpm_all) 
+
+plot_me = temp %>%
+          data.frame() %>%
+          filter(gene %in% c("Eif3a")) %>%
+          pivot_longer(cols = -gene, names_to = "Sample_Name", values_to = "cpm") %>%
+          mutate(cpm = as.numeric(cpm)) %>%
+          separate(Sample_Name, into = c("Target", "Guide", "Replicate", "Pool")) %>%
+          group_by(gene, Target, Guide, Pool) %>%
+          summarise(n = n(),
+                   avg_cpm = mean(cpm, na.rm=T),
+                   se = sd(cpm)/sqrt(n)
+          ) %>%
+          mutate(Target = factor(Target, levels = c("sgScr", "sgCtu1", "sgCtu2"))) %>%
+          arrange(Target)
+
+plot_me_filt = plot_me %>%
+               mutate(Target_Guide = str_c(Target, "_", Guide),
+                      Target_Guide = factor(Target_Guide, levels = unique(Target_Guide)))
+
+
+p<-ggplot(plot_me_filt, aes(x = Target_Guide, y = avg_cpm, fill = Target, alpha = Guide)) +
+  scale_fill_manual(values = c("grey90", "#D278AE", "#9E7FB8", "grey30")) +
+  scale_alpha_manual(values = c(1,0.5)) +
+  geom_col(position = "dodge", color = "black") +
+  geom_errorbar(mapping = aes(ymin = avg_cpm -se, ymax = avg_cpm+se), color = "black", alpha = 1) +
+  ggh4x::facet_grid2(Pool~gene, scales = "free", independent = "y") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 6),
+        legend.position = "none")
+p
+save_plot(fs::path(output_dir, "single_gene_plots/DE_hits/chemokines.pdf"), p , base_aspect_ratio = 1.6)
+```
+
+
+
+#DE Analysis 
+```{r}
+# FILTER COUNTS & METADATA TO DROP BAD REPLICATE----
+# all replicates seem to look fine so no need to drop
+# use same cpm thresholding as in normalization
+cpm_threshold = 10
+cpm_needed =2
+
+#check rows of metadata match cols of counts
+sum(colnames(counts_filt) == metadata$Sample)
+
+groups <- factor( str_c(metadata$Target, '_', metadata$Pool))
+dge = DGEList(counts = counts_filt, group = groups)
+dge_norm = calcNormFactors(dge)
+isexpr = rowSums(cpm(dge_norm) > cpm_threshold) >= cpm_needed
+dge_norm_fltd = dge_norm[isexpr, ]
+
+# DESIGN MATRIX----
+# create factor with all conditions in experiment
+f <- factor(groups, levels=unique(groups))
+
+# build a design matrix for modeling with limma voom and indicating condition for each sample
+design <- model.matrix(~0 + f)
+
+
+# renames column names in the design (remove extra "f" at beginning of each group name)
+colnames(design) <- sub("f", "", colnames(design))
+rownames(design) <- colnames(counts_filt)
+
+##LIMMA VOOM 
+
+# limma voom transforms count data to log2-counts per million (log2-cpm) with associated weights
+# estimate the mean-variance relationship and use this to compute appropriate observational-level weights.
+# The data are then ready for linear modeling.
+y <- voom(dge_norm_fltd, design, plot=T)
+
+# fit linear model for each gene given a series of arrays
+fit <- lmFit(y, design)
+
+##CONTRAST MATRIX----
+# each contrast for DE will be one pool in treated - control (ie. Treat_input - Control_input)
+# 1. get all treatments that arent control
+# 2. make an equivalent list with the same pools in control
+# 3. subtract 1 - 2
+all_cond = levels(groups)[!grepl("Scr", (levels(groups)))]
+conts = gsub(".*_", "sgScr_", all_cond)
+contrasts_list = str_c(all_cond, " - ", conts)
+contrasts_list = c(contrasts_list,
+                   sgCtu1_TE = str_c("(",contrasts_list[2], ") - (", contrasts_list[1], ")"),
+                   sgCtu1_TE = str_c("(",contrasts_list[4], ") - (", contrasts_list[3], ")"))
+
+contrast.matrix <- makeContrasts(contrasts = contrasts_list, levels = design)
+
+#do some renaming of scores to facilitate pivoting later on and make our lives easier...
+contrast.matrix = contrast.matrix %>%
+                  as.data.frame %>% #convert to df for now for manipulation
+                  rename_with(., ~gsub(" - sgScr.*", "", .)) %>%
+                  as.matrix()
+colnames(contrast.matrix)[5:6] = c("sgCtu1_TE","sgCtu2_TE")
+
+fit.cont <- contrasts.fit(fit, contrast.matrix)
+
+e.fit <- eBayes(fit.cont)
+
+#first bind together all LFC lists for all genes from ea. contrast
+log2FC.all = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                             function(coef) topTable(e.fit, coef=coef, number=Inf, adjust = "BH",
+                                                     sort.by='none')$logFC)) %>%
+      data.frame()
+
+adj_p = as.data.frame(map_dfc(1:length(colnames(e.fit$contrasts)),
+                                    function(coef) topTable(e.fit, coef=coef, adjust = "BH",
+                                                            number=Inf,
+                                                            sort.by='none')$adj.P.Val))
+
+rownames(log2FC.all) = rownames(adj_p) = make.unique(rownames(dge_norm_fltd), sep = ".")
+colnames(log2FC.all) = colnames(adj_p) = colnames(e.fit$contrasts)
+
+#turn log2FC.all.binary into matrix of -1,0,1
+#use different thresholds for DE v. TE contasts
+#DE -- FDR < 0.01, TE -- FDR < 0.2
+FDR_thresh_DE = 0.1
+FDR_thresh_TE = 0.1
+
+log2FC.all.binary = adj_p %>%
+                    mutate_at(vars(contains("p")), ~ifelse(. < FDR_thresh_DE, 1, 0)) %>%
+                    mutate_at(vars(contains("TE")), ~ifelse(. < FDR_thresh_TE, 1, 0))
+
+#filter LFC matrix accordingly
+log2FC.all.binary[(log2FC.all < 0) == T] = -1 * log2FC.all.binary[(log2FC.all < 0) == T]
+names = rownames(log2FC.all.binary)
+log2FC.all.binary = log2FC.all.binary %>%
+               data.frame()
+
+DE_log2FC.all = log2FC.all[rowSums(log2FC.all.binary != 0) > 0,] %>%
+          data.frame()
+rownames(DE_log2FC.all) = rownames(log2FC.all)[rowSums(log2FC.all.binary != 0) > 0]
+
+#filter DE matrix based on LFC thresh (abs(LFC) > 0 for TE or abs(LFC) > 0.5 for DE)
+#LFC_thresh_DE = 0
+#LFC_thresh_TE = 0
+#DE_LFC_thresh = DE_log2FC.all %>%
+ #               rownames_to_column("gene") %>%
+  ##              filter(abs(sgMax_Total) > LFC_thresh_DE | 
+    #                   abs(sgMax_Polysome) > LFC_thresh_DE |
+        #               gene %in% rownames(log2FC.all[log2FC.all.binary$TE != 0,])) %>%
+         #       column_to_rownames("gene") %>%
+         #       dplyr::select(sgMax_Total, sgMax_Polysome, TE)
+
+
+#write csvs of DEGs and all log2FC
+#write.csv(as.matrix(DE_LFC_thresh), fs::path(output_dir, "DE_analysis/different_thresholds/TE-fdr0.1_DE-fdr0.1_LFC1/20240221_FDR0.01LFC1_DE_fdr0.2TE-genes-lfcTable.csv"))
+
+write.csv(as.matrix(DE_log2FC.all), fs::path(output_dir, "DE/low_reads_filtered/contrasts_aggregated_by_target/20250107_LFC_matrix_DE_TE_FDR0.1.csv"))
+```
+
+#Complex Heatmap :)
+```{r}
+#set heatmap params----
+#set seed for kmeans
+set.seed(123)
+
+#set fast clustering
+ht_opt$fast_hclust = TRUE
+ht_opt$message = FALSE
+
+
+H_LFC = DE_LFC_thresh %>%
+        as.matrix()
+
+topAnnot_LFC = data.frame(Sample = colnames(H_LFC),
+                          Treatment = c("LSG", "LSG", "LSG"))  %>%
+               mutate(Sample = factor(Sample, levels = c("sgMax_Total", "sgMax_Polysome", "TE")))
+  
+p<-Heatmap(H_LFC,
+        column_title = "LFC",
+        column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=7),
+        name = "log2(treated/control)",
+        show_row_names = T,
+        row_names_gp = gpar(fontsize = 2),
+        show_column_names=F,
+        #cluster_rows =T,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC,
+                          col = list(Sample = c("sgMax_Total" = "white", 
+                                                "sgMax_Polysome" = "black",
+                                                "TE" = "#68C3A5"),
+                                     Treatment = c("LSG" = "#F68064")),
+                          border = T,
+                          show_legend = F,
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 8)),
+        column_split = topAnnot_LFC$Sample,
+        column_gap = unit(c(0,3), "mm"),
+        row_km = 4,
+        row_gap = unit(0, "mm"),
+        border = T,
+        #border_gp = gpar(col = "black", lwd = 2), 
+        col = colorRamp2(c(-2,-0.1, 0, 0.1, 2), c("blue","white","white", "white", "red"))
+        )
+
+#save clusters, re-order
+#get clusters----
+p_drawn <- draw(p) #draw to lock in row clustering
+p_drawn #run to show on screen and visually choose clusters
+
+#use LFC to determine order instead of transcript distribution
+rd <- row_order(p_drawn) #get row order & save
+#reorder to make sure order is 1:20 so we dont have issues when assigning clusters
+rd_ordered <- rd[order(as.numeric(names(rd)))] # make sure order is 1:20
+
+#get cluster gene lists
+cluster_list = list() #initialize empty list
+for(i in 1:4){
+  cluster_list[[i]] = data.frame(Cluster = i, 
+                                 gene = c(rownames(H_LFC)[rd_ordered[[i]]]))
+}
+cluster_df = do.call(bind_rows, cluster_list)
+
+#edit/condense clusters by eye
+cluster_df_edit = cluster_df %>%
+                  mutate(old_cluster = Cluster, 
+                         Cluster = ifelse(old_cluster %in% c(3), 1,
+                                    ifelse(old_cluster %in% c(4), 2,
+                                      ifelse(old_cluster %in% c(2), 3,4)))) %>%
+                  arrange(Cluster)
+
+rownames(cluster_df_edit) = make.unique(cluster_df_edit$gene)
+
+write.csv(as.matrix(cluster_df_edit), 
+          fs::path(output_dir,
+              "DE_analysis/TE_sig_only/FDR0.1/complex_heatmap/LFC_heatmap_4_clusters_cluster_info.csv"))
+
+#re-order H_LFC and re-draw heatmap (please make a function for this soon kate!!!!)----
+H_LFC_reorder = H_LFC[cluster_df_edit$gene,]
+
+#re-assign clusters manually to match TE up v. down heatmap segmentation
+morpheus_heatmap = cluster_df_edit %>% 
+                   full_join(H_LFC_reorder %>% 
+                             data.frame() %>%
+                             rownames_to_column("gene"), by = "gene") #%>%
+                   #mutate(auto_cluster = Cluster,
+                     #     Cluster = ifelse(auto_cluster == 9 & TE > 0, 5 , 
+                     #                      ifelse(auto_cluster == 6 & TE > 0, 1, auto_cluster))) %>%
+                   #arrange(Cluster, desc(sgMax_Total), desc(TE))
+
+H_LFC_reorder = morpheus_heatmap %>%
+                dplyr::select(gene, contains("sgMax"), TE) %>%
+                column_to_rownames("gene") %>%
+                as.matrix()
+
+write.csv(as.matrix(morpheus_heatmap), 
+          fs::path(output_dir,
+              "DE_analysis/TE_sig_only/FDR0.1/complex_heatmap/LFC_heatmap_4_clusters_for_morpheus.csv"))   
+
+left_annot = morpheus_heatmap %>% dplyr::select(Cluster)
+
+pLFC<-Heatmap(H_LFC_reorder[,c("sgMax_Total", "sgMax_Polysome")],
+        column_title = "LFC",
+        column_title_gp = gpar(fontsize=12),
+        #row_title = NULL,
+        cluster_row_slices = T,
+        name = "LFC \nlog2(sgMax/sgCTRL)",
+        show_row_names = F,
+        show_column_names=F,
+        cluster_rows = F,
+        cluster_columns = F,
+        top_annotation = HeatmapAnnotation(df = topAnnot_LFC[1:2,],
+                          col = list(Sample = c("sgMax_Total" = "white", 
+                                                "sgMax_Polysome" = "grey40"),
+                                     Treatment = c("LSG" = "#F68064")),
+                          border = T,
+                          show_legend = F,
+                          #annotation_name_side = "left",
+                          annotation_label = c("",""),
+                          annotation_name_gp = gpar(fontsize = 12, fontface = "bold")),
+        left_annotation = rowAnnotation(Cluster = left_annot$Cluster,
+                                            col = list(Cluster = 
+                                                         c(`1` = "#ED6868",
+                                                           `2` = "#F4908E",
+                                                           `3` = "#EED290",
+                                                           `4` = "#AED29E",
+                                                           `5` = "#5BABA4",
+                                                           `6` = "#A6DFF7",
+                                                           `7` = "#A5C7DE",
+                                                           `8` = "#C0ACD0",
+                                                           `9` = "#9E7FB8")),
+                                       show_legend = F,
+                                       annotation_label = c("")),
+        column_split = topAnnot_LFC[1:2,]$Sample,
+        column_gap = unit(c(0,3), "mm"),
+        #row_km = 20,
+        row_split = left_annot$Cluster,
+        row_gap = unit(c(0,3,0), "mm"),
+        border = T,
+        #border_gp = gpar(col = "black", lwd = 2), 
+        col = colorRamp2(c(-2,-0.1, 0, 0.1, 2), c("blue","white","white", "white", "red")),
+        width = unit(10, "cm")
+        )
+
+
+pTE<-Heatmap(H_LFC_reorder[,c("TE")],
+        column_title = "TE",
+        column_title_gp = gpar(fontsize=12),
+        row_title_gp = gpar(fontsize=8),
+        cluster_row_slices = T,
+        name = "TE \nlog2(polysome/total)",
+        show_row_names = T,
+        show_column_names=F,
+        row_names_gp = gpar(fontsize = 5),
+        cluster_rows = F,
+        cluster_columns = F,
+        #column_split = topAnnot_LFC[3,]$Sample,
+        #column_gap = unit(c(0,3), "mm"),
+        #row_km = 20,
+        row_split = left_annot$Cluster,
+        row_gap = unit(c(0,3,0), "mm"),
+        border = T,
+        #border_gp = gpar(col = "black", lwd = 2), 
+        col = colorRamp2(c(-1, 0, 1), c("darkblue","grey95","darkred")),
+        width = unit(1.5, "cm"))
+
+
+p<-pLFC+pTE
+
+#save intermediate heatmap
+do_plot("DE_analysis/TE_sig_only/FDR0.1/complex_heatmap/LFC_heatmap_4_clusters_separateTE_coloring.pdf",
+        10,10,p)
+
+
+
+```
+

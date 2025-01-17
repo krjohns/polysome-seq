@@ -9,17 +9,17 @@ library(scales) #for sci notation
 
 # directories
 wd <- getwd()
-input_dir <- "/Volumes/nchevrier/projects/katej/projects/polysome-seq/2024_12_CtuKO_polyseq/SCRB/GeneFull/Filtered" # where bcbio output and meta data matrices live on project2 server
-output_dir <- fs::path(wd, "input/data/2_formatted_data/star_solo")# where prepped data will live (metadata/counts csvs etc)
+input_dir <- "/Volumes/nchevrier/projects/katej/projects/polysome-seq/2025_01_15_KJ-TU-polysome-seq-repeat/KJ/SCRB/GeneFull/Filtered" # where bcbio output and meta data matrices live on project2 server
+output_dir <- fs::path(wd, "input/data/2_formatted_data/star_solo/20250117_CtuKO_re-seq")# where prepped data will live (metadata/counts csvs etc)
 
 ##read in sample info for de-multiplexing----
-sample_info <- read_xlsx(fs::path(wd, "input/other/202412_CtuKO_polysome-seq_barcodes.xlsx"))
+sample_info <- read_xlsx(fs::path(wd, "input/other/20250115_Ctu_polysome-seq_re-seq_barcodes.xlsx"))
 #create meta data table
 meta <- sample_info %>%
         separate(Sample, 
                  into = c("Target", "Guide", "Replicate", "Pool"),
                  sep = "-", remove = F) %>%
-        filter(Pool != "input_lo")
+        filter(Library == "KJ")
                  
 #read in counts matrices for DCs and T cells (combined matrix)---
 #read in tagcounts matrices
@@ -44,14 +44,14 @@ colnames(NS_counts) = plyr::mapvalues(colnames(NS_counts),  from = meta$Barcode,
 
 #reorder samples so replicates are clustered together for easier viz in morpheus
 meta_order = meta %>% 
-             mutate(Target = factor(Target, levels = c("sgCtrl", "sgCtu1", "sgCtu2"))) %>%
+             mutate(Target = factor(Target, levels = c("sgScr", "sgCtu1", "sgCtu2"))) %>%
              arrange(Target, Pool, Guide, Replicate)
   
-NS_counts_order = NS_counts[,meta_order$Sample_Name]
+NS_counts_order = NS_counts[,meta_order$Sample]
   
 #save separate count & meta data in case its useful later----
-write.csv(as.matrix(NS_counts_order), fs::path(output_dir, "20250107_CtuKO_polyseq_counts.csv"))
-write.csv(as.matrix(meta_order), fs::path(output_dir, "20250107_CtuKO_polyseq_metadata.csv"))
+write.csv(as.matrix(NS_counts_order), fs::path(output_dir, "20250117_CtuKO_polyseq_reseq_counts.csv"))
+write.csv(as.matrix(meta_order), fs::path(output_dir, "20250117_CtuKO_polyseq_reseq_metadata.csv"))
 
 
 #----checking unfiltered matrix to see # of reads for unused barcodes
@@ -79,5 +79,5 @@ p<-ggplot(read_sum, aes(x = Sample_Name, y = Reads)) +
 
 p
 #reads might be too low to get meaninful DE data...
-save_plot(fs::path(output_dir, "../../../../output/QC/read_by_sample_used.pdf"), p,
+save_plot(fs::path(output_dir, "../../../../../output/2025_01_17_CtuKO_polysome_re-seq/QC/TU_read_by_sample_used.pdf"), p,
           base_aspect_ratio = 1.75)
