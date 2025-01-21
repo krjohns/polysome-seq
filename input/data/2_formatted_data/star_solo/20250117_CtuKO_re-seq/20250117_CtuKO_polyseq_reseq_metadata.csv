@@ -1,0 +1,24 @@
+,Library,Sample_short,Sample,Target,Guide,Replicate,Pool,Barcode,IDT_plate_well
+1,KJ,Input - 1,sgScr-g1-R1-input,sgScr,g1,R1,input,AAAACT,IDT_P1_A01
+2,KJ,Input - 2,sgScr-g1-R2-input,sgScr,g1,R2,input,AAAGTT,IDT_P1_A02
+3,KJ,Input - 3,sgScr-g2-R1-input,sgScr,g2,R1,input,AAATTG,IDT_P1_A03
+4,KJ,Input - 4,sgScr-g2-R2-input,sgScr,g2,R2,input,AAGATT,IDT_P1_A04
+5,KJ,Polysome - 1,sgScr-g1-R1-polysome,sgScr,g1,R1,polysome,ATATAG,IDT_P1_B01
+6,KJ,Polysome - 2,sgScr-g1-R2-polysome,sgScr,g1,R2,polysome,ATCAAA,IDT_P1_B02
+7,KJ,Polysome - 3,sgScr-g2-R1-polysome,sgScr,g2,R1,polysome,ATGAAT,IDT_P1_B03
+8,KJ,Polysome - 4,sgScr-g2-R2-polysome,sgScr,g2,R2,polysome,ATTACT,IDT_P1_B04
+9,KJ,Input - 5,sgCtu1-g1-R1-input,sgCtu1,g1,R1,input,AATACA,IDT_P1_A05
+10,KJ,Input - 6,sgCtu1-g1-R2-input,sgCtu1,g1,R2,input,AAACTA,IDT_P4_A01
+11,KJ,Input - 7,sgCtu1-g2-R1-input,sgCtu1,g2,R1,input,AATCTT,IDT_P1_A06
+12,KJ,Input - 8,sgCtu1-g2-R2-input,sgCtu1,g2,R2,input,AATTCT,IDT_P1_A07
+13,KJ,Polysome - 5,sgCtu1-g1-R1-polysome,sgCtu1,g1,R1,polysome,ATTCTA,IDT_P1_B05
+14,KJ,Polysome - 6,sgCtu1-g1-R2-polysome,sgCtu1,g1,R2,polysome,ATTTCA,IDT_P1_B06
+15,KJ,Polysome - 7,sgCtu1-g2-R1-polysome,sgCtu1,g2,R1,polysome,CAAATA,IDT_P1_B07
+16,KJ,Polysome - 8,sgCtu1-g2-R2-polysome,sgCtu1,g2,R2,polysome,CATTAT,IDT_P1_B08
+17,KJ,Input - 9,sgCtu2-g1-R1-input,sgCtu2,g1,R1,input,ACAATA,IDT_P1_A08
+18,KJ,Input - 10,sgCtu2-g1-R2-input,sgCtu2,g1,R2,input,ACTTAT,IDT_P1_A09
+19,KJ,Input - 11,sgCtu2-g2-R1-input,sgCtu2,g2,R1,input,AGATTA,IDT_P1_A10
+20,KJ,Input - 12,sgCtu2-g2-R2-input,sgCtu2,g2,R2,input,ATAAAC,IDT_P1_A11
+21,KJ,Polysome - 9,sgCtu2-g1-R1-polysome,sgCtu2,g1,R1,polysome,CTATAT,IDT_P1_B09
+22,KJ,Polysome - 11,sgCtu2-g2-R1-polysome,sgCtu2,g2,R1,polysome,CTTTAA,IDT_P1_B10
+23,KJ,Polysome - 12,sgCtu2-g2-R2-polysome,sgCtu2,g2,R2,polysome,GATAAT,IDT_P1_B11
